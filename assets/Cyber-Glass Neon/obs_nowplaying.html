@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>OBS – Now Playing</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --orange: #f97316; --pink: #ec4899; --purple: #a855f7;
+  --green: #22c55e; --red: #ef4444; --yellow: #facc15;
+  --text: #f8fafc; --muted: #94a3b8;
+  --accent: #f97316; --accent2: #a855f7;
+  --opacity: 0.9; --title-size: 20px;
+  --font: 'Inter', system-ui, sans-serif;
+  --display: 'Space Grotesk', sans-serif;
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: transparent;
+  font-family: var(--font); color: var(--text); }
+
+#now-playing {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  min-height: 92px; padding: 14px 28px; display: flex; align-items: center; gap: 18px;
+  background: linear-gradient(180deg, rgba(10,10,24,0.92), rgba(6,6,16,0.96));
+  backdrop-filter: blur(24px) saturate(160%);
+  border-top: 1px solid transparent;
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04);
+  overflow: hidden; transition: all .4s ease;
+}
+#now-playing.hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
+
+#now-playing::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--orange), var(--pink), var(--purple), var(--orange));
+  background-size: 300% 100%; animation: borderFlow 4s linear infinite;
+}
+@keyframes borderFlow { 0%{background-position:0% 50%} 100%{background-position:300% 50%} }
+
+#np-disc {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0; position: relative;
+  background: repeating-radial-gradient(circle at center, #1a1a2e 0px, #1a1a2e 2px, #0f0f1e 3px, #0f0f1e 4px);
+  border: 2px solid rgba(168,85,247,0.5); box-shadow: 0 0 20px rgba(168,85,247,0.3);
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+  animation: spin 3.6s linear infinite;
+}
+#np-disc::after { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle, var(--purple) 0%, #1a1a2e 100%); border: 2px solid rgba(255,255,255,0.1); }
+#np-disc.paused { animation-play-state: paused; filter: grayscale(0.6); }
+#np-disc.hidden { display: none !important; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#np-thumb { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex-shrink: 0;
+  background: #1e1e2e; border: 2px solid rgba(249,115,22,0.35); box-shadow: 0 0 16px rgba(249,115,22,0.25); }
+#np-thumb.hidden { display: none; }
+
+#np-info { flex: 1; min-width: 0; }
+
+#np-label { font-size: 10px; text-transform: uppercase; letter-spacing: 2.5px; font-weight: 800;
+  color: var(--orange); display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+  font-family: var(--display); }
+.eq-bar { display: inline-block; width: 3px; height: 10px; background: var(--orange); border-radius: 2px;
+  animation: eqBounce 1.2s ease-in-out infinite; }
+.eq-bar:nth-child(2) { animation-delay: 0.15s; height: 14px; }
+.eq-bar:nth-child(3) { animation-delay: 0.3s; height: 8px; }
+.eq-bar:nth-child(4) { animation-delay: 0.45s; height: 12px; }
+@keyframes eqBounce { 0%,100%{transform:scaleY(0.4);opacity:0.5} 50%{transform:scaleY(1);opacity:1} }
+
+#tiktok-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block;
+  transition: all .4s ease; }
+#tiktok-dot.online { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,0.5), 0 0 16px rgba(34,197,94,0.3);
+  animation: livePulse 2s ease-in-out infinite; }
+#tiktok-dot.off { display: none; }
+@keyframes livePulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.7;transform:scale(1.15)} }
+
+#np-title { font-size: var(--title-size); font-weight: 800; line-height: 1.25; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; text-shadow: 0 2px 12px rgba(0,0,0,0.8); font-family: var(--display); }
+#np-title.idle { color: var(--muted); font-weight: 500; font-size: 15px; }
+
+#np-meta { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; align-items: center; gap: 10px; }
+#np-channel.hidden { display: none; }
+#np-requester { background: linear-gradient(135deg, rgba(249,115,22,0.18), rgba(236,72,153,0.12));
+  border: 1px solid rgba(249,115,22,0.35); border-radius: 20px; padding: 2px 10px;
+  font-size: 11px; color: #fdba74; font-weight: 700; box-shadow: 0 0 8px rgba(249,115,22,0.15); }
+#np-requester.hidden { display: none; }
+
+#np-progress-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+  background: rgba(255,255,255,0.06); overflow: hidden; }
+#np-progress-wrap.hidden { display: none; }
+#np-progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--orange), var(--pink), var(--purple));
+  background-size: 200% 100%; box-shadow: 0 0 12px rgba(249,115,22,0.6); transition: width 1s linear; position: relative; }
+#np-progress-bar::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 40px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); animation: shimmer 2s infinite; }
+@keyframes shimmer { 0%{transform:translateX(-40px)} 100%{transform:translateX(40px)} }
+
+#np-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+
+#np-queue-badge { background: linear-gradient(135deg, rgba(168,85,247,0.2), rgba(168,85,247,0.08));
+  border: 1px solid rgba(168,85,247,0.4); border-radius: 20px; padding: 5px 14px;
+  font-size: 12px; color: #d8b4fe; font-weight: 700; box-shadow: 0 0 12px rgba(168,85,247,0.2);
+  transition: all .3s var(--spring); }
+#np-queue-badge.pop { animation: badgePop .4s var(--spring); }
+@keyframes badgePop { 0%{transform:scale(0.9)} 50%{transform:scale(1.08)} 100%{transform:scale(1)} }
+
+#skip-vote-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+  opacity: 0; transform: translateY(4px); transition: all .4s ease; }
+#skip-vote-bar.visible { opacity: 1; transform: translateY(0); }
+#skip-vote-bar.hidden { display: none !important; }
+#skip-vote-dots { display: flex; gap: 4px; }
+.skip-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.08); transition: all .3s var(--spring); }
+.skip-dot.filled { background: var(--yellow); border-color: var(--yellow);
+  box-shadow: 0 0 8px rgba(250,204,21,0.5), 0 0 16px rgba(250,204,21,0.3); animation: dotPop .5s var(--spring); }
+@keyframes dotPop { 0%{transform:scale(0)} 60%{transform:scale(1.3)} 100%{transform:scale(1)} }
+</style>
+</head>
+<body>
+<div id="now-playing">
+  <div id="np-disc">🎵</div>
+  <img id="np-thumb" class="hidden" alt="">
+  <div id="np-info">
+    <div id="np-label">
+      <span id="tiktok-dot"></span>
+      <span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span>
+      Now Playing
+    </div>
+    <div id="np-title" class="idle">Menunggu lagu…</div>
+    <div id="np-meta">
+      <span id="np-channel"></span>
+      <span id="np-requester" class="hidden"></span>
+    </div>
+  </div>
+  <div id="np-right">
+    <div id="np-queue-badge">📋 0 in queue</div>
+    <div id="skip-vote-bar">
+      <span>⏭ Skip</span>
+      <div id="skip-vote-dots"></div>
+      <span id="skip-vote-count">0/5</span>
+    </div>
+  </div>
+  <div id="np-progress-wrap"><div id="np-progress-bar"></div></div>
+</div>
+<script>
+const API='http://localhost:8000';
+let state={current_song:null,is_playing:false,is_paused:false,queue_count:0,tiktok_connected:false,skip_votes:0,skip_threshold:5,elapsed_ms:0};
+let cfg={};
+let songStartedAt=0,songDurationMs=0,progressTimer=null;
+
+function applyConfig(c){
+  cfg=c;
+  document.documentElement.style.setProperty('--accent',c.accent_color||'#f97316');
+  document.documentElement.style.setProperty('--accent2',c.accent_color2||'#a855f7');
+  document.documentElement.style.setProperty('--title-size',(c.font_size_title||20)+'px');
+  document.documentElement.style.setProperty('--opacity',c.opacity_panels||0.82);
+  toggle('now-playing',c.show_now_playing!==false);
+  toggle('skip-vote-bar',c.show_skip_vote!==false,'hidden');
+  toggle('np-progress-wrap',c.show_progress_bar!==false);
+  const dot=document.getElementById('tiktok-dot');
+  if(c.show_tiktok_dot===false)dot.classList.add('off');else dot.classList.remove('off');
+  render();
+}
+function toggle(id,show,cls='hidden'){const el=document.getElementById(id);if(!el)return;show?el.classList.remove(cls):el.classList.add(cls);}
+
+function render(){
+  const song=state.current_song,title=document.getElementById('np-title'),chanEl=document.getElementById('np-channel');
+  const reqEl=document.getElementById('np-requester'),thumb=document.getElementById('np-thumb'),disc=document.getElementById('np-disc');
+  const badge=document.getElementById('np-queue-badge');
+  const old=parseInt(badge.textContent.replace(/\D/g,''))||0;
+  badge.textContent=`📋 ${state.queue_count||0} in queue`;
+  if((state.queue_count||0)!==old&&old!==0){badge.classList.remove('pop');void badge.offsetWidth;badge.classList.add('pop');setTimeout(()=>badge.classList.remove('pop'),400);}
+  if(!song||!state.is_playing){title.textContent='Menunggu lagu…';title.className='idle';chanEl.textContent='';reqEl.classList.add('hidden');thumb.classList.add('hidden');disc.style.display='flex';disc.className='';stopProgress();return;}
+  title.textContent=song.title;title.className='';
+  if(cfg.show_channel!==false){chanEl.textContent=song.channel||'';chanEl.classList.remove('hidden');}else chanEl.classList.add('hidden');
+  if(song.requested_by&&cfg.show_requester!==false){reqEl.textContent='👤 @'+song.requested_by;reqEl.classList.remove('hidden');}else reqEl.classList.add('hidden');
+  if(song.thumbnail&&cfg.show_thumbnail!==false){thumb.src=song.thumbnail;thumb.classList.remove('hidden');disc.style.display='none';}else{thumb.classList.add('hidden');disc.style.display='flex';}
+  disc.className=state.is_paused?'paused':'';
+  if(state.is_playing&&!state.is_paused){songStartedAt=Date.now()-(state.elapsed_ms||0);songDurationMs=(song.duration||0)*1000;startProgress();}else stopProgress();
+}
+function startProgress(){stopProgress();if(!songDurationMs||cfg.show_progress_bar===false)return;const bar=document.getElementById('np-progress-bar');progressTimer=setInterval(()=>{const p=Math.min(100,((Date.now()-songStartedAt)/songDurationMs)*100);bar.style.width=p+'%';if(p>=100)stopProgress();},500);}
+function stopProgress(){if(progressTimer){clearInterval(progressTimer);progressTimer=null;}document.getElementById('np-progress-bar').style.width='0%';}
+function updateSkipVote(){const bar=document.getElementById('skip-vote-bar'),dots=document.getElementById('skip-vote-dots'),countEl=document.getElementById('skip-vote-count');const v=state.skip_votes||0,t=state.skip_threshold||5;countEl.textContent=`${v}/${t}`;dots.innerHTML=Array.from({length:t},(_,i)=>`<div class="skip-dot${i<v?' filled':''}"></div>`).join('');if(cfg.show_skip_vote!==false)bar.classList.toggle('visible',v>0);}
+function updateDot(){const d=document.getElementById('tiktok-dot');if(cfg.show_tiktok_dot===false){d.classList.add('off');return;}d.classList.remove('off');d.classList.toggle('online',!!state.tiktok_connected);}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('init',e=>{Object.assign(state,JSON.parse(e.data));render();updateSkipVote();updateDot();});
+  es.addEventListener('player_state',e=>{Object.assign(state,JSON.parse(e.data));render();});
+  es.addEventListener('skip_vote',e=>{const d=JSON.parse(e.data);state.skip_votes=d.votes;state.skip_threshold=d.threshold;updateSkipVote();});
+  es.addEventListener('skip_executed',()=>{state.skip_votes=0;updateSkipVote();});
+  es.addEventListener('tiktok_status',e=>{state.tiktok_connected=JSON.parse(e.data).connected;updateDot();});
+  es.addEventListener('player_stopped',()=>{state.current_song=null;state.is_playing=false;state.skip_votes=0;render();updateSkipVote();});
+  es.addEventListener('overlay_config',e=>{applyConfig(JSON.parse(e.data));});
+  es.onerror=()=>{es.close();setTimeout(()=>{poll();setTimeout(connectSSE,5000);},2000);};
+}
+async function poll(){try{const r=await fetch(`${API}/overlay/state`);if(r.ok){Object.assign(state,await r.json());render();}}catch(_){}}
+async function init(){try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(_){}connectSSE();setInterval(poll,10000);}
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920,height=1080">
+<title>OBS Overlay — Cyber Glass</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --orange: #f97316; --orange-glow: rgba(249,115,22,0.45);
+  --pink: #ec4899;   --pink-glow: rgba(236,72,153,0.35);
+  --purple: #a855f7; --purple-glow: rgba(168,85,247,0.4);
+  --green: #22c55e;  --green-glow: rgba(34,197,94,0.5);
+  --red: #ef4444;    --red-glow: rgba(239,68,68,0.5);
+  --yellow: #facc15; --yellow-glow: rgba(250,204,21,0.5);
+  --text: #f8fafc;   --text-dim: #94a3b8;
+  --bg-deep: rgba(6,6,18,0.88);
+  --bg-panel: rgba(12,12,28,0.78);
+  --border: rgba(249,115,22,0.22);
+  --radius: 16px;
+  --shadow: 0 12px 40px rgba(0,0,0,0.7);
+  --font: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: transparent;
+  font-family: var(--font); color: var(--text); -webkit-font-smoothing: antialiased; }
+
+/* ── Ambient background particles (CSS only) ── */
+body::before {
+  content: ''; position: fixed; inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 120%, rgba(249,115,22,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 20%, rgba(168,85,247,0.06) 0%, transparent 50%);
+  pointer-events: none; z-index: 0;
+}
+
+/* ── Now Playing Bar ─────────────────────────── */
+#now-playing {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  min-height: 92px; padding: 14px 28px;
+  display: flex; align-items: center; gap: 18px;
+  background: linear-gradient(180deg, rgba(10,10,24,0.92) 0%, rgba(6,6,16,0.95) 100%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border-top: 1px solid transparent;
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04);
+  overflow: hidden; transition: opacity .4s var(--smooth), transform .4s var(--smooth);
+}
+#now-playing.hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
+
+/* Animated gradient border top */
+#now-playing::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--orange), var(--pink), var(--purple), var(--orange));
+  background-size: 300% 100%;
+  animation: borderFlow 4s linear infinite;
+}
+@keyframes borderFlow { 0%{background-position:0% 50%} 100%{background-position:300% 50%} }
+
+/* Vinyl disc */
+#np-disc {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0; position: relative;
+  background:
+    repeating-radial-gradient(circle at center, #1a1a2e 0px, #1a1a2e 2px, #0f0f1e 3px, #0f0f1e 4px),
+    radial-gradient(circle at 35% 35%, rgba(255,255,255,0.08) 0%, transparent 50%);
+  border: 2px solid rgba(168,85,247,0.5);
+  box-shadow: 0 0 20px var(--purple-glow), inset 0 0 10px rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+  animation: spin 3.6s linear infinite;
+}
+#np-disc::after {
+  content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle, var(--purple) 0%, #1a1a2e 100%);
+  border: 2px solid rgba(255,255,255,0.1);
+}
+#np-disc.paused { animation-play-state: paused; filter: grayscale(0.6); }
+#np-disc.hidden { display: none !important; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#np-thumb {
+  width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex-shrink: 0;
+  background: #1e1e2e; border: 2px solid rgba(249,115,22,0.35);
+  box-shadow: 0 0 16px rgba(249,115,22,0.25); transition: all .3s var(--smooth);
+}
+#np-thumb.hidden { display: none; }
+
+#np-info { flex: 1; min-width: 0; position: relative; }
+
+#np-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 2.5px;
+  font-weight: 800; color: var(--orange); display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px; font-family: var(--font-display);
+}
+#np-label .eq-bar {
+  display: inline-block; width: 3px; height: 10px; background: var(--orange);
+  border-radius: 2px; animation: eqBounce 1.2s ease-in-out infinite;
+}
+#np-label .eq-bar:nth-child(2) { animation-delay: 0.15s; height: 14px; }
+#np-label .eq-bar:nth-child(3) { animation-delay: 0.3s; height: 8px; }
+#np-label .eq-bar:nth-child(4) { animation-delay: 0.45s; height: 12px; }
+@keyframes eqBounce { 0%,100%{transform:scaleY(0.4);opacity:0.5} 50%{transform:scaleY(1);opacity:1} }
+
+#tiktok-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block;
+  transition: all .4s var(--smooth); position: relative;
+}
+#tiktok-dot.online {
+  background: var(--green); box-shadow: 0 0 8px var(--green-glow), 0 0 16px var(--green-glow);
+  animation: livePulse 2s ease-in-out infinite;
+}
+#tiktok-dot.off { display: none; }
+@keyframes livePulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.7;transform:scale(1.15)} }
+
+#np-title {
+  font-size: var(--title-size, 20px); font-weight: 800; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.8); font-family: var(--font-display);
+  letter-spacing: -0.3px; transition: all .3s var(--smooth);
+}
+#np-title.idle { color: var(--text-dim); font-weight: 500; font-size: 15px; letter-spacing: 0; }
+
+#np-meta {
+  font-size: 12px; color: var(--text-dim); margin-top: 4px; display: flex; align-items: center; gap: 10px;
+}
+#np-channel.hidden { display: none; }
+#np-requester {
+  background: linear-gradient(135deg, rgba(249,115,22,0.18), rgba(236,72,153,0.12));
+  border: 1px solid rgba(249,115,22,0.35); border-radius: 20px;
+  padding: 2px 10px; font-size: 11px; color: #fdba74; font-weight: 700;
+  backdrop-filter: blur(4px); box-shadow: 0 0 8px rgba(249,115,22,0.15);
+}
+#np-requester.hidden { display: none; }
+
+/* Progress bar */
+#np-progress-wrap {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+  background: rgba(255,255,255,0.06); overflow: hidden;
+}
+#np-progress-wrap.hidden { display: none; }
+#np-progress-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--orange), var(--pink), var(--purple));
+  background-size: 200% 100%;
+  box-shadow: 0 0 12px var(--orange-glow), 0 0 4px var(--pink-glow);
+  transition: width 1s linear;
+  position: relative;
+}
+#np-progress-bar::after {
+  content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 40px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer { 0%{transform:translateX(-40px)} 100%{transform:translateX(40px)} }
+
+/* Right side */
+#np-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+
+#np-queue-badge {
+  background: linear-gradient(135deg, rgba(168,85,247,0.2), rgba(168,85,247,0.08));
+  border: 1px solid rgba(168,85,247,0.4); border-radius: 20px;
+  padding: 5px 14px; font-size: 12px; color: #d8b4fe; font-weight: 700;
+  backdrop-filter: blur(8px); box-shadow: 0 0 12px rgba(168,85,247,0.2);
+  transition: all .3s var(--spring);
+}
+#np-queue-badge.pop { animation: badgePop .4s var(--spring); }
+@keyframes badgePop { 0%{transform:scale(0.9)} 50%{transform:scale(1.08)} 100%{transform:scale(1)} }
+
+#skip-vote-bar {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim);
+  opacity: 0; transform: translateY(4px); transition: all .4s var(--smooth);
+}
+#skip-vote-bar.visible { opacity: 1; transform: translateY(0); }
+#skip-vote-bar.hidden { display: none !important; }
+#skip-vote-dots { display: flex; gap: 4px; }
+.skip-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.08); transition: all .3s var(--spring);
+  position: relative;
+}
+.skip-dot.filled {
+  background: var(--yellow); border-color: var(--yellow);
+  box-shadow: 0 0 8px var(--yellow-glow), 0 0 16px var(--yellow-glow);
+  animation: dotPop .5s var(--spring);
+}
+@keyframes dotPop { 0%{transform:scale(0)} 60%{transform:scale(1.3)} 100%{transform:scale(1)} }
+
+/* ── Right Panel ───────────────────────────────── */
+#right-panel {
+  position: fixed; top: 24px; right: 24px; width: 360px; z-index: 50;
+  display: flex; flex-direction: column; gap: 14px;
+  max-height: 980px; transition: all .4s var(--smooth);
+}
+#right-panel.pos-left { right: auto; left: 24px; }
+#right-panel.hidden { opacity: 0; transform: translateX(30px); pointer-events: none; }
+
+.panel-card {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  backdrop-filter: blur(20px) saturate(170%);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(255,255,255,0.03) inset;
+  position: relative; transition: all .3s var(--smooth);
+}
+.panel-card::before {
+  content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--orange), var(--purple), transparent);
+  opacity: 0.6;
+}
+.panel-header {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 2px;
+  font-weight: 800; color: var(--orange); font-family: var(--font-display);
+}
+
+/* ── Queue Panel ───────────────────────────────── */
+#queue-card.hidden { display: none; }
+
+/* Now playing mini */
+#np-mini { padding: 10px 14px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+#np-mini.hidden { display: none; }
+#np-mini-inner {
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(135deg, rgba(249,115,22,0.1), rgba(168,85,247,0.08));
+  border: 1px solid rgba(249,115,22,0.25); border-radius: 12px;
+  padding: 8px 12px; position: relative; overflow: hidden;
+}
+#np-mini-inner::before {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(249,115,22,0.05), transparent);
+  animation: miniShine 3s infinite;
+}
+@keyframes miniShine { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+#np-mini-icon { font-size: 18px; flex-shrink: 0; animation: spin 4s linear infinite; filter: drop-shadow(0 0 4px var(--orange-glow)); }
+#np-mini-icon.paused { animation-play-state: paused; filter: grayscale(0.6); }
+#np-mini-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+#np-mini-sub { font-size: 10px; color: #fb923c; margin-top: 2px; font-weight: 600; letter-spacing: 0.5px; }
+
+#queue-list { padding: 10px 14px 12px; }
+.q-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  animation: queueSlide .4s var(--smooth) both;
+  transition: all .2s var(--smooth);
+}
+.q-row:hover { transform: translateX(4px); }
+.q-row:last-child { border-bottom: none; }
+.q-num {
+  width: 24px; height: 24px; border-radius: 8px; flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(249,115,22,0.2), rgba(168,85,247,0.15));
+  border: 1px solid rgba(249,115,22,0.3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: var(--orange); font-family: var(--font-display);
+  box-shadow: 0 0 8px rgba(249,115,22,0.15);
+}
+.q-title { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.2px; }
+.q-by { font-size: 10px; color: var(--text-dim); flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 10px; }
+.q-empty {
+  font-size: 13px; color: var(--text-dim); text-align: center; padding: 20px 0;
+  font-style: italic; display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.q-empty::before { content: '🎵'; opacity: 0.5; animation: float 3s ease-in-out infinite; }
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+
+@keyframes queueSlide {
+  from { opacity: 0; transform: translateX(20px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+#queue-footer { padding: 8px 14px 10px; border-top: 1px solid rgba(255,255,255,0.05); }
+#queue-total { font-size: 10px; color: var(--text-dim); text-align: center; font-weight: 500; letter-spacing: 0.5px; }
+
+/* ── Request Feed Panel ────────────────────────── */
+#req-card.hidden { display: none; }
+#req-feed { max-height: 380px; overflow: hidden; }
+#req-list { padding: 8px 14px 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.req-item {
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px;
+  border-radius: 10px; background: linear-gradient(135deg, rgba(15,15,35,0.8), rgba(10,10,25,0.9));
+  border: 1px solid rgba(255,255,255,0.06); backdrop-filter: blur(8px);
+  animation: reqSlide .45s var(--smooth) both;
+  transition: all .2s var(--smooth); position: relative; overflow: hidden;
+}
+.req-item::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, var(--orange), var(--purple));
+  border-radius: 10px 0 0 10px; opacity: 0.6;
+}
+.req-item:hover { transform: translateX(4px); border-color: rgba(249,115,22,0.2); }
+@keyframes reqSlide {
+  from { opacity: 0; transform: translateX(30px) scale(0.96); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.req-icon { font-size: 15px; flex-shrink: 0; margin-top: 2px; filter: drop-shadow(0 0 4px rgba(255,255,255,0.2)); }
+.req-body { flex: 1; min-width: 0; }
+.req-user { font-size: 11px; font-weight: 800; color: #fb923c; margin-bottom: 2px; letter-spacing: 0.3px; }
+.req-text { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.9; }
+.req-status { font-size: 10px; flex-shrink: 0; margin-top: 2px; font-weight: 800; display: flex; align-items: center; gap: 4px; }
+.req-status.queued    { color: var(--green); text-shadow: 0 0 8px var(--green-glow); animation: statusPulse 2s infinite; }
+.req-status.searching { color: var(--yellow); animation: statusSpin 1.5s linear infinite; }
+.req-status.not_found { color: var(--red); animation: statusShake 0.5s ease-in-out; }
+.req-status.error     { color: var(--red); animation: statusFlash 1s infinite; }
+.req-status.skip      { color: var(--yellow); }
+@keyframes statusPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+@keyframes statusSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+@keyframes statusShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+@keyframes statusFlash { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ── Commands Panel ────────────────────────────── */
+#cmd-panel {
+  position: fixed; top: 24px; left: 24px; width: 260px; z-index: 50;
+  transition: all .4s var(--smooth);
+}
+#cmd-panel.pos-right { left: auto; right: 24px; }
+#cmd-panel.hidden { opacity: 0; transform: translateX(-30px); pointer-events: none; }
+
+#cmd-rows { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 6px; }
+.cmd-row {
+  display: flex; gap: 10px; align-items: center; padding: 6px 8px;
+  border-radius: 8px; transition: all .2s var(--smooth);
+}
+.cmd-row:hover { background: rgba(255,255,255,0.04); transform: translateX(4px); }
+.cmd-tag {
+  background: linear-gradient(135deg, rgba(249,115,22,0.15), rgba(236,72,153,0.1));
+  border: 1px solid rgba(249,115,22,0.35); border-radius: 8px;
+  padding: 3px 10px; font-size: 11px; color: #fdba74; font-weight: 800;
+  font-family: 'SF Mono', monospace; box-shadow: 0 0 8px rgba(249,115,22,0.1);
+  transition: all .2s var(--spring);
+}
+.cmd-row:hover .cmd-tag { box-shadow: 0 0 12px rgba(249,115,22,0.25); transform: scale(1.05); }
+.cmd-desc { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+.cmd-divider { height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); margin: 2px 0; }
+
+/* TikTok footer */
+#cmd-footer { padding: 8px 16px 12px; }
+#tiktok-status { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+#tiktok-dot2 {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex-shrink: 0;
+  position: relative; transition: all .4s var(--smooth);
+}
+#tiktok-dot2.online {
+  background: var(--green); box-shadow: 0 0 8px var(--green-glow);
+}
+#tiktok-dot2.online::before, #tiktok-dot2.online::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 50%;
+  border: 1px solid var(--green); animation: ripple 2s infinite;
+}
+#tiktok-dot2.online::after { animation-delay: 0.6s; }
+@keyframes ripple { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.5);opacity:0} }
+
+/* ── Next Up Toast ─────────────────────────────── */
+#next-up {
+  position: fixed; bottom: 110px; left: 28px; z-index: 90;
+  background: linear-gradient(135deg, rgba(10,10,24,0.92), rgba(16,10,30,0.9));
+  border: 1px solid rgba(168,85,247,0.4); border-radius: 12px;
+  padding: 10px 18px; backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(168,85,247,0.2);
+  display: none; animation: toastIn .5s var(--spring) both;
+}
+#next-up.visible { display: block; }
+#next-up.hidden { display: none !important; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#next-up-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--purple); font-weight: 800; display: flex; align-items: center; gap: 6px;
+}
+#next-up-label::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--purple);
+  box-shadow: 0 0 8px var(--purple-glow); animation: pulseDot 1.5s infinite;
+}
+@keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(1.3)} }
+#next-up-title {
+  font-size: 14px; font-weight: 700; margin-top: 4px; max-width: 400px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text);
+}
+
+/* ── Subtitle Panel ────────────────────────────── */
+#subtitle-panel {
+  position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%);
+  max-width: 1400px; width: 90%; text-align: center; pointer-events: none; z-index: 80;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  transition: opacity .4s var(--smooth);
+}
+#subtitle-panel.hidden { opacity: 0; pointer-events: none; }
+
+#subtitle-bg {
+  position: relative; display: inline-block;
+  background: linear-gradient(180deg, rgba(12,12,28,0.88), rgba(8,8,20,0.92));
+  border: 1px solid rgba(249,115,22,0.25); border-radius: 50px;
+  padding: 14px 42px; backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    0 12px 40px rgba(0,0,0,0.6),
+    0 0 0 1px rgba(255,255,255,0.04) inset,
+    0 0 80px rgba(249,115,22,0.1);
+  max-width: 100%; overflow: hidden;
+  animation: subEnter .45s var(--spring) both;
+}
+#subtitle-bg::before {
+  content: ''; position: absolute; top: 0; left: 8%; right: 8%; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--orange), var(--pink), var(--purple), transparent);
+  opacity: 0.8;
+}
+#subtitle-bg::after {
+  content: ''; position: absolute; bottom: -20px; left: 20%; right: 20%; height: 30px;
+  background: radial-gradient(ellipse, rgba(249,115,22,0.15) 0%, transparent 70%);
+  filter: blur(12px); pointer-events: none;
+}
+#subtitle-bg.leaving { animation: subExit .35s var(--smooth) both; }
+@keyframes subEnter {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes subExit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-14px) scale(0.97); }
+}
+
+#subtitle-text {
+  font-size: var(--sub-size, 28px); font-weight: 800; letter-spacing: 0.3px;
+  color: var(--text); text-shadow: 0 2px 16px rgba(0,0,0,0.9);
+  white-space: nowrap; line-height: 1.4; display: block; font-family: var(--font-display);
+}
+
+.sub-word {
+  display: inline; transition: all .12s var(--smooth);
+  color: rgba(241,245,249,0.45);
+}
+.sub-word.done { color: rgba(241,245,249,0.3); text-shadow: none; }
+.sub-word.active {
+  color: #ffffff;
+  text-shadow:
+    0 0 20px rgba(249,115,22,1),
+    0 0 40px rgba(249,115,22,0.8),
+    0 0 80px rgba(249,115,22,0.3);
+  animation: wordGlow .15s var(--spring) both;
+}
+@keyframes wordGlow {
+  from { transform: scale(0.9); opacity: 0.7; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+#subtitle-song-hint {
+  font-size: 11px; color: var(--text-dim); letter-spacing: 1.5px;
+  text-transform: uppercase; opacity: 0.7; font-weight: 700;
+  display: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+#subtitle-song-hint.visible { display: block; animation: hintFade .4s var(--smooth); }
+@keyframes hintFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 0.7; transform: translateY(0); } }
+
+/* Subtitle progress */
+#sub-progress {
+  width: min(600px, 60%); height: 3px; border-radius: 999px; overflow: hidden;
+  background: rgba(255,255,255,0.08); margin-top: 4px;
+}
+#sub-progress.hidden { display: none; }
+#sub-progress-bar {
+  width: 0%; height: 100%;
+  background: linear-gradient(90deg, var(--orange), var(--pink), var(--purple));
+  background-size: 200% 100%;
+  box-shadow: 0 0 10px var(--orange-glow);
+  transition: width 0.1s linear;
+}
+
+/* ── Scrollbar hide ──────────────────────────────── */
+::-webkit-scrollbar { width: 0; height: 0; }
+</style>
+</head>
+<body>
+
+<!-- Subtitle -->
+<div id="subtitle-panel" class="hidden">
+  <div id="subtitle-bg">
+    <span id="subtitle-text"></span>
+  </div>
+  <div id="subtitle-song-hint"></div>
+  <div id="sub-progress" class="hidden"><div id="sub-progress-bar"></div></div>
+</div>
+
+<!-- Now Playing -->
+<div id="now-playing">
+  <div id="np-disc">🎵</div>
+  <img id="np-thumb" class="hidden" alt="">
+  <div id="np-info">
+    <div id="np-label">
+      <span id="tiktok-dot"></span>
+      <span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span>
+      Now Playing
+    </div>
+    <div id="np-title" class="idle">Menunggu lagu…</div>
+    <div id="np-meta">
+      <span id="np-channel"></span>
+      <span id="np-requester" class="hidden"></span>
+    </div>
+  </div>
+  <div id="np-right">
+    <div id="np-queue-badge">📋 0 in queue</div>
+    <div id="skip-vote-bar">
+      <span>⏭ Skip</span>
+      <div id="skip-vote-dots"></div>
+      <span id="skip-vote-count">0/5</span>
+    </div>
+  </div>
+  <div id="np-progress-wrap"><div id="np-progress-bar"></div></div>
+</div>
+
+<!-- Right Panel -->
+<div id="right-panel">
+  <div class="panel-card" id="queue-card">
+    <div class="panel-header">📋 Antrian</div>
+    <div id="np-mini" class="hidden">
+      <div id="np-mini-inner">
+        <div id="np-mini-icon">🎵</div>
+        <div>
+          <div id="np-mini-title">–</div>
+          <div id="np-mini-sub">Now Playing</div>
+        </div>
+      </div>
+    </div>
+    <div id="queue-list"><div class="q-empty">Antrian kosong</div></div>
+    <div id="queue-footer"><div id="queue-total"></div></div>
+  </div>
+  <div class="panel-card" id="req-card">
+    <div id="req-feed">
+      <div class="panel-header">💬 Request TikTok</div>
+      <div id="req-list"><div class="q-empty" style="padding:10px 0">Belum ada request</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Commands -->
+<div id="cmd-panel">
+  <div class="panel-card">
+    <div class="panel-header">💡 Commands</div>
+    <div id="cmd-rows"></div>
+    <div class="cmd-divider"></div>
+    <div id="cmd-footer">
+      <div id="tiktok-status">
+        <div id="tiktok-dot2"></div>
+        <span id="tiktok-label">TikTok Live</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Next Up -->
+<div id="next-up">
+  <div id="next-up-label">🎵 Next Up</div>
+  <div id="next-up-title"></div>
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+
+let state = {
+  current_song: null, is_playing: false, is_paused: false,
+  queue_count: 0, queue: [], tiktok_connected: false,
+  recent_requests: [], skip_votes: 0, skip_threshold: 5,
+  elapsed_ms: 0, commands: {},
+};
+let cfg = {};
+let songStartedAt = 0, songDurationMs = 0, progressTimer = null;
+let nextUpTimer = null, subtitleHideTimer = null, karaokeTimers = [];
+let subtitleVisible = false;
+
+function applyConfig(c) {
+  cfg = c;
+  document.documentElement.style.setProperty('--orange', c.accent_color || '#f97316');
+  document.documentElement.style.setProperty('--border', hexAlpha(c.accent_color || '#f97316', 0.22));
+  document.documentElement.style.setProperty('--title-size', (c.font_size_title || 20) + 'px');
+  document.documentElement.style.setProperty('--sub-size', (c.subtitle_font_size || 28) + 'px');
+  document.documentElement.style.setProperty('--opacity', c.opacity_panels || 0.82);
+
+  toggle('now-playing', c.show_now_playing !== false);
+  toggle('queue-card', c.show_queue !== false);
+  toggle('req-card', c.show_request_feed !== false);
+  toggle('cmd-panel', c.show_commands_hint !== false, 'hidden');
+  toggle('skip-vote-bar', c.show_skip_vote !== false, 'hidden');
+  toggle('np-progress-wrap', c.show_progress_bar !== false);
+
+  if (c.show_subtitle === false) {
+    clearSubtitle(true);
+    document.getElementById('subtitle-panel').classList.add('hidden');
+  }
+
+  const dot = document.getElementById('tiktok-dot');
+  if (c.show_tiktok_dot === false) dot.classList.add('off');
+  else dot.classList.remove('off');
+
+  const rp = document.getElementById('right-panel');
+  rp.classList.toggle('pos-left', c.position_queue === 'left');
+
+  const cp = document.getElementById('cmd-panel');
+  if (c.position_commands === 'hidden') cp.classList.add('hidden');
+  else {
+    cp.classList.remove('hidden');
+    cp.classList.toggle('pos-right', c.position_commands === 'right');
+  }
+
+  if (c.show_next_up === false) document.getElementById('next-up').classList.add('hidden');
+
+  renderAll();
+}
+
+function toggle(id, show, cls = 'hidden') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (show) el.classList.remove(cls);
+  else el.classList.add(cls);
+}
+
+function hexAlpha(hex, alpha) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/* ── SSE ─────────────────────────────────────── */
+function connectSSE() {
+  const es = new EventSource(`${API}/overlay/events`);
+
+  es.addEventListener('init', e => {
+    const d = JSON.parse(e.data);
+    Object.assign(state, d);
+    renderAll();
+    if (d.commands) renderCommands(d.commands);
+  });
+
+  es.addEventListener('player_state', e => {
+    const d = JSON.parse(e.data);
+    const songChanged = state.current_song?.title !== d.current_song?.title;
+    Object.assign(state, d);
+    renderAll();
+    if (songChanged && d.current_song) showNextUp(state.queue[0] || null);
+  });
+
+  es.addEventListener('tiktok_request', e => {
+    addRequestToFeed(JSON.parse(e.data));
+  });
+
+  es.addEventListener('subtitle', e => {
+    const d = JSON.parse(e.data);
+    showSubtitle(d.text, d.words || null, d.duration_ms || 4000, d.song_hint || null);
+  });
+
+  es.addEventListener('subtitle_clear', () => clearSubtitle(false));
+  es.addEventListener('player_stopped', () => clearSubtitle(false));
+
+  es.addEventListener('skip_vote', e => {
+    const d = JSON.parse(e.data);
+    state.skip_votes = d.votes; state.skip_threshold = d.threshold;
+    updateSkipVoteBar();
+  });
+
+  es.addEventListener('skip_executed', () => {
+    state.skip_votes = 0; updateSkipVoteBar();
+  });
+
+  es.addEventListener('tiktok_status', e => {
+    state.tiktok_connected = JSON.parse(e.data).connected;
+    updateTikTokDot();
+  });
+
+  es.addEventListener('overlay_config', e => {
+    applyConfig(JSON.parse(e.data));
+  });
+
+  es.onerror = () => {
+    es.close();
+    setTimeout(() => { pollFallback(); setTimeout(connectSSE, 5000); }, 2000);
+  };
+}
+
+async function pollFallback() {
+  try {
+    const r = await fetch(`${API}/overlay/state`);
+    if (r.ok) { Object.assign(state, await r.json()); renderAll(); }
+  } catch(_) {}
+}
+
+/* ── Render ──────────────────────────────────── */
+function renderAll() {
+  renderNowPlaying();
+  renderQueue();
+  renderRequests();
+  updateTikTokDot();
+  updateSkipVoteBar();
+}
+
+function renderNowPlaying() {
+  const song = state.current_song;
+  const title = document.getElementById('np-title');
+  const chanEl = document.getElementById('np-channel');
+  const reqEl = document.getElementById('np-requester');
+  const thumb = document.getElementById('np-thumb');
+  const disc = document.getElementById('np-disc');
+  const badge = document.getElementById('np-queue-badge');
+
+  const oldCount = parseInt(badge.textContent.replace(/\D/g,'')) || 0;
+  badge.textContent = `📋 ${state.queue_count || 0} in queue`;
+  if ((state.queue_count || 0) !== oldCount && oldCount !== 0) {
+    badge.classList.remove('pop');
+    void badge.offsetWidth;
+    badge.classList.add('pop');
+    setTimeout(() => badge.classList.remove('pop'), 400);
+  }
+
+  if (!song || !state.is_playing) {
+    title.textContent = 'Menunggu lagu…'; title.className = 'idle';
+    chanEl.textContent = ''; reqEl.classList.add('hidden');
+    thumb.classList.add('hidden'); disc.style.display = 'flex'; disc.className = '';
+    stopProgress(); return;
+  }
+
+  title.textContent = song.title; title.className = '';
+
+  if (cfg.show_channel !== false) {
+    chanEl.textContent = song.channel || '';
+    chanEl.classList.remove('hidden');
+  } else chanEl.classList.add('hidden');
+
+  if (song.requested_by && cfg.show_requester !== false) {
+    reqEl.textContent = '👤 @' + song.requested_by;
+    reqEl.classList.remove('hidden');
+  } else reqEl.classList.add('hidden');
+
+  if (song.thumbnail && cfg.show_thumbnail !== false) {
+    thumb.src = song.thumbnail;
+    thumb.classList.remove('hidden'); disc.style.display = 'none';
+  } else { thumb.classList.add('hidden'); disc.style.display = 'flex'; }
+
+  disc.className = state.is_paused ? 'paused' : '';
+
+  if (state.is_playing && !state.is_paused) {
+    songStartedAt = Date.now() - (state.elapsed_ms || 0);
+    songDurationMs = (song.duration || 0) * 1000;
+    startProgress();
+  } else stopProgress();
+}
+
+function startProgress() {
+  stopProgress();
+  if (!songDurationMs || cfg.show_progress_bar === false) return;
+  const bar = document.getElementById('np-progress-bar');
+  progressTimer = setInterval(() => {
+    const pct = Math.min(100, ((Date.now() - songStartedAt) / songDurationMs) * 100);
+    bar.style.width = pct + '%';
+    if (pct >= 100) stopProgress();
+  }, 500);
+}
+function stopProgress() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  document.getElementById('np-progress-bar').style.width = '0%';
+}
+
+function renderQueue() {
+  const list = document.getElementById('queue-list');
+  const items = state.queue || [];
+  const limit = cfg.max_queue_items || 6;
+  if (!items.length) { list.innerHTML = '<div class="q-empty">Antrian kosong</div>'; return; }
+
+  list.innerHTML = items.slice(0, limit).map((song, i) => {
+    const t = typeof song === 'string' ? song : (song.title || song?.song?.title || '?');
+    const by = typeof song === 'object' && song.requested_by ? song.requested_by : '';
+    return `<div class="q-row" style="animation-delay:${i*0.05}s">
+      <div class="q-num">${i+1}</div>
+      <div class="q-title" title="${esc(t)}">${esc(t)}</div>
+      ${by ? `<div class="q-by">@${esc(by)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const total = document.getElementById('queue-total');
+  const count = state.queue_count || items.length;
+  total.textContent = count > limit ? `+${count-limit} lagu lagi dalam antrian` : '';
+}
+
+function renderRequests() {
+  const list = document.getElementById('req-list');
+  const items = state.recent_requests || [];
+  const limit = cfg.max_request_items || 8;
+  if (!items.length) {
+    list.innerHTML = '<div class="q-empty" style="padding:10px 0">Belum ada request</div>';
+    return;
+  }
+  list.innerHTML = items.slice(0, limit).map((r, i) => buildReqItem(r, i)).join('');
+}
+
+function addRequestToFeed(data) {
+  state.recent_requests = state.recent_requests || [];
+  const ex = state.recent_requests.find(r => r.user === data.user && r.text === data.query);
+  if (ex) { ex.status = data.status; if (data.song_title) ex.song_title = data.song_title; }
+  else {
+    state.recent_requests.unshift({
+      type: 'request', user: data.user, text: data.query,
+      status: data.status, song_title: data.song_title,
+    });
+    state.recent_requests = state.recent_requests.slice(0, 20);
+  }
+  renderRequests();
+}
+
+function buildReqItem(r, idx) {
+  const isSkip = r.type === 'skip';
+  const icon = isSkip ? '⏭' : '🎵';
+  const badges = { queued:'✅', searching:'🔍', not_found:'❌', error:'⚠️', skip:'🗳️' };
+  const sl = isSkip ? 'skip' : (r.status || 'queued');
+  return `<div class="req-item" style="animation-delay:${idx*0.04}s">
+    <div class="req-icon">${icon}</div>
+    <div class="req-body">
+      <div class="req-user">@${esc(r.user||'')}</div>
+      <div class="req-text">${esc(r.song_title||r.text||'')}</div>
+    </div>
+    <div class="req-status ${esc(sl)}">${badges[sl]||''}</div>
+  </div>`;
+}
+
+function updateSkipVoteBar() {
+  const bar = document.getElementById('skip-vote-bar');
+  const dots = document.getElementById('skip-vote-dots');
+  const countEl = document.getElementById('skip-vote-count');
+  const votes = state.skip_votes || 0;
+  const threshold = state.skip_threshold || 5;
+  countEl.textContent = `${votes}/${threshold}`;
+  dots.innerHTML = Array.from({length: threshold}, (_,i) =>
+    `<div class="skip-dot${i < votes ? ' filled' : ''}"></div>`
+  ).join('');
+  if (cfg.show_skip_vote !== false) bar.classList.toggle('visible', votes > 0);
+}
+
+function updateTikTokDot() {
+  const dot = document.getElementById('tiktok-dot');
+  if (cfg.show_tiktok_dot === false) { dot.classList.add('off'); return; }
+  dot.classList.remove('off');
+  dot.classList.toggle('online', !!state.tiktok_connected);
+}
+
+function renderCommands(cmds) {
+  const rows = document.getElementById('cmd-rows');
+  const entries = [
+    { key:'request', label:'Request lagu' },
+    { key:'skip',    label:'Vote skip' },
+    { key:'queue',   label:'Lihat antrian' },
+  ];
+  rows.innerHTML = entries.map(e => {
+    const list = cmds[e.key] || [];
+    if (!list.length) return '';
+    return `<div class="cmd-row">
+      <span class="cmd-tag">${esc(list[0])}</span>
+      <span class="cmd-desc">${esc(e.label)}</span>
+    </div>`;
+  }).join('');
+}
+
+function showNextUp(next) {
+  if (cfg.show_next_up === false) return;
+  if (nextUpTimer) clearTimeout(nextUpTimer);
+  const el = document.getElementById('next-up');
+  if (el.classList.contains('hidden')) return;
+  const t = typeof next === 'string' ? next : next?.title;
+  if (!t) return;
+  document.getElementById('next-up-title').textContent = t;
+  el.classList.add('visible');
+  nextUpTimer = setTimeout(() => el.classList.remove('visible'), 5000);
+}
+
+/* ── Subtitle ────────────────────────────────── */
+function showSubtitle(text, words, durationMs, songHint) {
+  if (cfg.show_subtitle === false) return;
+  if (!text) { clearSubtitle(false); return; }
+
+  const panel = document.getElementById('subtitle-panel');
+  const bg = document.getElementById('subtitle-bg');
+  const textEl = document.getElementById('subtitle-text');
+  const hint = document.getElementById('subtitle-song-hint');
+  const prog = document.getElementById('sub-progress');
+  const progBar = document.getElementById('sub-progress-bar');
+
+  if (subtitleHideTimer) { clearTimeout(subtitleHideTimer); subtitleHideTimer = null; }
+  karaokeTimers.forEach(t => clearTimeout(t));
+  karaokeTimers = [];
+
+  const doShow = () => {
+    if (songHint) {
+      hint.textContent = songHint;
+      hint.classList.add('visible');
+    } else hint.classList.remove('visible');
+
+    if (words && words.length > 0) {
+      textEl.innerHTML = words.map((w, i) =>
+        `<span class="sub-word" id="sw-${i}">${esc(w.word)}</span>`
+      ).join('&nbsp;');
+
+      words.forEach((w, i) => {
+        if (w.start == null) return;
+        const tOn = setTimeout(() => {
+          const span = document.getElementById(`sw-${i}`);
+          if (!span) return;
+          span.classList.remove('done');
+          span.classList.add('active');
+          if (i > 0) {
+            const prev = document.getElementById(`sw-${i-1}`);
+            if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
+          }
+        }, w.start * 1000);
+        karaokeTimers.push(tOn);
+
+        if (w.end != null) {
+          const tOff = setTimeout(() => {
+            const span = document.getElementById(`sw-${i}`);
+            if (span) { span.classList.remove('active'); span.classList.add('done'); }
+          }, w.end * 1000);
+          karaokeTimers.push(tOff);
+        }
+      });
+    } else {
+      textEl.innerHTML = text.split(' ').map(w =>
+        `<span class="sub-word active">${esc(w)}</span>`
+      ).join('&nbsp;');
+    }
+
+    if (durationMs > 0) {
+      prog.classList.remove('hidden');
+      progBar.style.transition = 'none';
+      progBar.style.width = '0%';
+      void progBar.offsetWidth;
+      progBar.style.transition = `width ${durationMs}ms linear`;
+      progBar.style.width = '100%';
+    } else prog.classList.add('hidden');
+
+    panel.classList.remove('hidden');
+    bg.classList.remove('leaving');
+    void bg.offsetWidth;
+    bg.style.animation = 'none';
+    void bg.offsetWidth;
+    bg.style.animation = '';
+    subtitleVisible = true;
+
+    subtitleHideTimer = setTimeout(() => clearSubtitle(false), durationMs);
+  };
+
+  if (subtitleVisible) {
+    bg.classList.add('leaving');
+    bg.addEventListener('animationend', () => {
+      bg.classList.remove('leaving');
+      subtitleVisible = false;
+      doShow();
+    }, { once: true });
+  } else doShow();
+}
+
+function clearSubtitle(instant) {
+  if (subtitleHideTimer) { clearTimeout(subtitleHideTimer); subtitleHideTimer = null; }
+  karaokeTimers.forEach(t => clearTimeout(t));
+  karaokeTimers = [];
+
+  const panel = document.getElementById('subtitle-panel');
+  const bg = document.getElementById('subtitle-bg');
+
+  if (instant || !subtitleVisible) {
+    panel.classList.add('hidden');
+    subtitleVisible = false;
+    return;
+  }
+  bg.classList.add('leaving');
+  bg.addEventListener('animationend', () => {
+    panel.classList.add('hidden');
+    bg.classList.remove('leaving');
+    subtitleVisible = false;
+  }, { once: true });
+}
+
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+/* ── Init ────────────────────────────────────── */
+async function init() {
+  try {
+    const r = await fetch(`${API}/overlay/config`);
+    if (r.ok) applyConfig(await r.json());
+  } catch (_) {}
+  connectSSE();
+  setInterval(pollFallback, 10000);
+}
+
+init();
+</script>
+</body>
+</html>
