@@ -105,6 +105,7 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
   <div class="tabs">
     <div class="tab active" onclick="switchTab('player')">▶ Player</div>
     <div class="tab" onclick="switchTab('settings')">⚙ Settings</div>
+    <div class="tab" onclick="switchTab('filter')">🚫 Filter</div>
   </div>
 
   <!-- ══════════════ PLAYER TAB ══════════════ -->
@@ -311,6 +312,62 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
     </div>
   </div><!-- /settings -->
 
+  <!-- ══════════════ FILTER TAB ══════════════ -->
+  <div id="tab-filter" class="tab-panel">
+
+    <!-- Info -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🚫 Filter Kata Kotor</div>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:10px;line-height:1.6">
+        Komentar TikTok yang mengandung kata di bawah akan <b style="color:#ef4444">diblokir</b> —
+        tidak dibaca TTS dan tidak muncul di overlay.<br>
+        Tidak case-sensitive. Disimpan ke file <code style="background:#111827;padding:1px 5px;border-radius:3px">badwords.txt</code>.
+      </p>
+      <!-- Test box -->
+      <div class="cfg-row" style="margin-bottom:6px">
+        <span class="cfg-label">Tes kalimat</span>
+        <input class="cfg-input" id="filter-test-input" type="text" placeholder="Ketik teks untuk dicek…" style="flex:1">
+        <button class="btn btn-secondary btn-sm" onclick="testFilter()">Cek</button>
+      </div>
+      <div id="filter-test-result" style="font-size:12px;min-height:20px;padding:0 4px;margin-bottom:4px"></div>
+    </div>
+
+    <!-- Add word -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">➕ Tambah Kata</div>
+      <div class="cfg-row">
+        <input class="cfg-input" id="filter-new-word" type="text" placeholder="Ketik kata lalu tekan Tambah…" style="flex:1"
+          onkeydown="if(event.key==='Enter') addFilterWord()">
+        <button class="btn btn-danger btn-sm" onclick="addFilterWord()">Tambah</button>
+      </div>
+    </div>
+
+    <!-- Word list -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">
+        📋 Daftar Kata Terfilter
+        <span id="filter-count" style="font-weight:400;color:#6b7280;text-transform:none;font-size:11px;margin-left:6px"></span>
+      </div>
+      <div id="filter-word-list" style="display:flex;flex-wrap:wrap;gap:8px;min-height:40px">
+        <span style="color:#6b7280;font-size:13px">Memuat…</span>
+      </div>
+    </div>
+
+    <!-- Bulk edit -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">✏️ Edit Massal (satu kata per baris)</div>
+      <textarea id="filter-bulk-textarea" rows="10"
+        style="width:100%;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:10px;font-size:13px;font-family:monospace;resize:vertical;outline:none"
+        placeholder="Tulis satu kata per baris…"></textarea>
+      <div class="cfg-save-row" style="margin-top:10px">
+        <button class="btn btn-success" onclick="saveBulkFilter()">💾 Simpan Semua</button>
+        <button class="btn btn-secondary" onclick="loadFilterWords()">↺ Reset dari file</button>
+        <span class="cfg-toast" id="filterToast"></span>
+      </div>
+    </div>
+
+  </div><!-- /filter -->
+
 </div><!-- /app -->
 
 <script>
@@ -319,14 +376,15 @@ let queueData=[], shuffleOn=false, lastServerRunning=false;
 
 // ── Tab switching ──────────────────────────────────────────────
 function switchTab(name){
+  const panels=['player','settings','filter'];
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const panels=['player','settings'];
     t.classList.toggle('active', panels[i]===name);
   });
   document.querySelectorAll('.tab-panel').forEach(p=>{
     p.classList.toggle('active', p.id==='tab-'+name);
   });
   if(name==='settings') loadSettings();
+  if(name==='filter') loadFilterWords();
 }
 
 // ── Tag input helpers ──────────────────────────────────────────
@@ -729,6 +787,88 @@ function showNotif(msg, ok=true, duration=4000){
 
   es.onerror = () => {}; // silent – reconnects automatically
 })();
+
+// ── Bad Word Filter ────────────────────────────────────────────
+async function loadFilterWords(){
+  try{
+    const data = await api('GET','/badwords');
+    renderFilterWords(data.words||[]);
+    syncBulkTextarea(data.words||[]);
+    document.getElementById('filter-count').textContent = `(${data.count} kata)`;
+  }catch(e){ showFilterToast('Gagal memuat: '+e.message, false); }
+}
+
+function renderFilterWords(words){
+  const el = document.getElementById('filter-word-list');
+  if(!words.length){
+    el.innerHTML='<span style="color:#6b7280;font-size:13px">Belum ada kata terfilter.</span>';
+    return;
+  }
+  el.innerHTML = words.map(w=>`
+    <span style="display:inline-flex;align-items:center;gap:4px;background:#374151;border-radius:5px;padding:3px 10px;font-size:12px;border:1px solid #4b5563">
+      ${escHtml(w)}
+      <button style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:15px;line-height:1;padding:0 0 0 4px"
+        title="Hapus" onclick="deleteFilterWord('${escHtml(w).replace(/'/g,"\\'")}')">×</button>
+    </span>`).join('');
+}
+
+function syncBulkTextarea(words){
+  document.getElementById('filter-bulk-textarea').value = words.join('\n');
+}
+
+async function addFilterWord(){
+  const inp = document.getElementById('filter-new-word');
+  const word = inp.value.trim().toLowerCase();
+  if(!word){ showFilterToast('Kata tidak boleh kosong', false); return; }
+  try{
+    const data = await api('POST','/badwords/add',{word});
+    inp.value='';
+    showFilterToast('✓ '+data.message, true);
+    await loadFilterWords();
+  }catch(e){ showFilterToast('Error: '+e.message, false); }
+}
+
+async function deleteFilterWord(word){
+  try{
+    await api('DELETE',`/badwords/${encodeURIComponent(word)}`);
+    showFilterToast('✓ "'+word+'" dihapus', true);
+    await loadFilterWords();
+  }catch(e){ showFilterToast('Error: '+e.message, false); }
+}
+
+async function saveBulkFilter(){
+  const raw = document.getElementById('filter-bulk-textarea').value;
+  const words = raw.split('\n')
+    .map(l=>l.trim().toLowerCase())
+    .filter(l=>l && !l.startsWith('#'));
+  try{
+    const data = await api('POST','/badwords',{words});
+    showFilterToast('✓ Disimpan – '+data.count+' kata', true);
+    await loadFilterWords();
+  }catch(e){ showFilterToast('Error: '+e.message, false); }
+}
+
+async function testFilter(){
+  const text = document.getElementById('filter-test-input').value;
+  const el = document.getElementById('filter-test-result');
+  if(!text){ el.innerHTML=''; return; }
+  try{
+    const data = await api('POST','/badwords/test',{text});
+    if(data.blocked){
+      el.innerHTML='<span style="color:#ef4444;font-weight:600">🚫 DIBLOKIR – mengandung kata terlarang</span>';
+    } else {
+      el.innerHTML='<span style="color:#22c55e;font-weight:600">✓ Aman – tidak mengandung kata terlarang</span>';
+    }
+  }catch(e){ el.innerHTML='<span style="color:#f59e0b">Error: '+escHtml(e.message)+'</span>'; }
+}
+
+function showFilterToast(msg, ok){
+  const t = document.getElementById('filterToast');
+  t.textContent = msg;
+  t.className = 'cfg-toast ' + (ok?'ok':'err');
+  clearTimeout(t._to);
+  t._to = setTimeout(()=>{ t.className='cfg-toast'; }, 3500);
+}
 
 // ── Init ───────────────────────────────────────────────────────
 syncColor('cfg-ov_accent_color','cfg-ov_accent_color_text');

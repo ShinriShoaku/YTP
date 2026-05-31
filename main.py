@@ -122,6 +122,59 @@ def _get_settings() -> dict:
     })
 
 # ─────────────────────────────────────────────────────────────
+#  Bad Word Filter
+# ─────────────────────────────────────────────────────────────
+
+BADWORDS_FILE = os.path.join(BASE_DIR, "badwords.txt")
+
+def _load_badwords() -> list:
+    """Load bad words list from badwords.txt. Returns list of lowercase strings."""
+    if not os.path.exists(BADWORDS_FILE):
+        return []
+    try:
+        with open(BADWORDS_FILE, "r", encoding="utf-8") as f:
+            words = []
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    words.append(line.lower())
+            return words
+    except Exception:
+        return []
+
+def _save_badwords(words: list):
+    """Save bad words list to badwords.txt."""
+    with open(BADWORDS_FILE, "w", encoding="utf-8") as f:
+        f.write("# Filter Kata Kotor / Bad Word Filter\n")
+        f.write("# Satu kata per baris. Tidak case-sensitive.\n")
+        f.write("# Baris yang diawali # dianggap komentar dan diabaikan.\n#\n")
+        for w in words:
+            f.write(w.strip().lower() + "\n")
+
+def _contains_badword(text: str) -> bool:
+    """
+    Returns True if text contains any bad word from the list.
+    Uses whole-word matching where possible, falls back to substring for phrases.
+    """
+    badwords = _load_badwords()
+    if not badwords:
+        return False
+    text_lower = text.lower()
+    import re
+    for word in badwords:
+        if not word:
+            continue
+        # Use word-boundary match for single words, substring for multi-word phrases
+        if " " in word:
+            if word in text_lower:
+                return True
+        else:
+            pattern = r'\b' + re.escape(word) + r'\b'
+            if re.search(pattern, text_lower):
+                return True
+    return False
+
+# ─────────────────────────────────────────────────────────────
 #  Models
 # ─────────────────────────────────────────────────────────────
 
@@ -786,6 +839,11 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str):
     # Juga skip jika ternyata dimulai dengan karakter '#' yang belum terdaftar
     if comment.startswith("#"):
         return
+
+    # ── Bad Word Filter ───────────────────────────────────────
+    if _contains_badword(comment):
+        print(f"[Filter] Komentar dari @{nickname} diblokir (mengandung kata terlarang): {comment[:40]}…")
+        return  # blokir TTS dan overlay untuk komentar ini
 
     # Jalankan TTS di thread terpisah agar tidak blokir event loop TikTok
     threading.Thread(
@@ -1843,6 +1901,60 @@ def save_config(body: dict):
     overlay_merged = {**_DEFAULT_OVERLAY_CONFIG, **merged.get("overlay", {})}
     _broadcast("overlay_config", overlay_merged)
     return {"message": "Config saved", "config": merged}
+
+# ─────────────────────────────────────────────────────────────
+#  Bad Word Filter API
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/badwords", tags=["filter"])
+def get_badwords():
+    """Return the current bad word list."""
+    words = _load_badwords()
+    return {"words": words, "count": len(words), "file": BADWORDS_FILE}
+
+@app.post("/badwords", tags=["filter"])
+def save_badwords(body: dict):
+    """
+    Replace the entire bad word list.
+    Body: { "words": ["kata1", "kata2", ...] }
+    """
+    words = body.get("words", [])
+    if not isinstance(words, list):
+        raise HTTPException(400, detail="'words' harus berupa list/array")
+    cleaned = [w.strip().lower() for w in words if isinstance(w, str) and w.strip()]
+    _save_badwords(cleaned)
+    return {"message": "Filter disimpan", "count": len(cleaned)}
+
+@app.post("/badwords/add", tags=["filter"])
+def add_badword(body: dict):
+    """Add a single word to the bad word list. Body: { "word": "kata" }"""
+    word = (body.get("word") or "").strip().lower()
+    if not word:
+        raise HTTPException(400, detail="'word' tidak boleh kosong")
+    words = _load_badwords()
+    if word in words:
+        return {"message": "Kata sudah ada di filter", "word": word}
+    words.append(word)
+    _save_badwords(words)
+    return {"message": "Kata ditambahkan", "word": word, "count": len(words)}
+
+@app.delete("/badwords/{word}", tags=["filter"])
+def delete_badword(word: str):
+    """Remove a specific word from the bad word list."""
+    word = word.strip().lower()
+    words = _load_badwords()
+    if word not in words:
+        raise HTTPException(404, detail=f"Kata '{word}' tidak ditemukan di filter")
+    words = [w for w in words if w != word]
+    _save_badwords(words)
+    return {"message": "Kata dihapus", "word": word, "count": len(words)}
+
+@app.post("/badwords/test", tags=["filter"])
+def test_badword(body: dict):
+    """Test whether a text would be filtered. Body: { "text": "..." }"""
+    text = body.get("text", "")
+    blocked = _contains_badword(text)
+    return {"text": text, "blocked": blocked}
 
 # ─────────────────────────────────────────────────────────────
 #  OBS Overlay SSE
