@@ -4,7 +4,7 @@ REM Usage:  Double-click or run from Developer Command Prompt
 setlocal enabledelayedexpansion
 
 REM === 🛠️ SET VERSI APLIKASI DI SINI ===
-set APP_VERSION=v3.0.0-tester
+set APP_VERSION=v3.1.0-tester
 set DIST_NAME=YTPlayer-%APP_VERSION%
 set DIST_DIR=dist\%DIST_NAME%
 
