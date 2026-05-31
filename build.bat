@@ -3,11 +3,13 @@ REM build.bat – Build YTPlayer standalone for Windows
 REM Usage:  Double-click or run from Developer Command Prompt
 setlocal enabledelayedexpansion
 
-set DIST_NAME=YTPlayer
+REM === 🛠️ SET VERSI APLIKASI DI SINI ===
+set APP_VERSION=v3.0.0-tester
+set DIST_NAME=YTPlayer-%APP_VERSION%
 set DIST_DIR=dist\%DIST_NAME%
 
 echo ============================================
-echo   YTPlayer Windows Build
+echo   YTPlayer Windows Build (%APP_VERSION%)
 echo ============================================
 
 REM ── 1. Check Python ─────────────────────────────────────────
@@ -33,8 +35,14 @@ python -m pip install pyinstaller -q
 
 REM ── 4. Clean previous build ─────────────────────────────────
 echo [INFO] Cleaning previous build...
-if exist build     rmdir /s /q build
-if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
+if exist build rmdir /s /q build
+REM Bersihkan semua versi lama di dist\
+for /d %%d in (dist\YTPlayer*) do (
+    echo [INFO] Removing old build: %%d
+    rmdir /s /q "%%d"
+)
+REM Bersihkan arsip zip lama juga
+for %%f in (dist\YTPlayer*.zip) do del /q "%%f"
 
 REM ── 5. PyInstaller ──────────────────────────────────────────
 echo [INFO] Running PyInstaller...
@@ -50,24 +58,49 @@ mkdir "%DIST_DIR%\overlays" 2>nul
 mkdir "%DIST_DIR%\mpv"      2>nul
 mkdir "%DIST_DIR%\assets"   2>nul
 
-REM Copy binary
+REM Copy binary (PyInstaller output ke dist\YTPlayer.exe)
+if not exist "dist\YTPlayer.exe" (
+    echo [ERROR] dist\YTPlayer.exe not found. PyInstaller output mismatch?
+    pause & exit /b 1
+)
 copy "dist\YTPlayer.exe" "%DIST_DIR%\YTPlayer.exe" >nul
+echo   + YTPlayer.exe
+
+REM Tanam file versi
+echo %APP_VERSION% > "%DIST_DIR%\version.txt"
+echo   + version.txt (%APP_VERSION%)
 
 REM Copy overlay HTML files
-for %%f in (obs_overlay.html obs_nowplaying.html obs_queue.html ^
-            obs_commands.html obs_subtitle.html obs_requests.html) do (
+for %%f in (obs_overlay.html obs_nowplaying.html obs_queue.html obs_commands.html obs_subtitle.html obs_requests.html) do (
     if exist "%%f" (
         copy "%%f" "%DIST_DIR%\overlays\%%f" >nul
         echo   + overlays\%%f
     )
 )
 
+REM Copy player.html (Web Remote UI)
+if exist "player.html" (
+    copy "player.html" "%DIST_DIR%\player.html" >nul
+    echo   + player.html
+) else (
+    echo [WARN] player.html not found. Web UI will not be available.
+)
+
 REM Copy config / queue stubs
-if not exist "%DIST_DIR%\config.json" copy config.json "%DIST_DIR%\config.json" >nul
-if not exist "%DIST_DIR%\queue.json"  echo [] > "%DIST_DIR%\queue.json"
+if not exist "%DIST_DIR%\config.json" (
+    copy config.json "%DIST_DIR%\config.json" >nul
+    echo   + config.json
+)
+if not exist "%DIST_DIR%\queue.json" (
+    echo [] > "%DIST_DIR%\queue.json"
+    echo   + queue.json
+)
 
 REM Copy assets
-if exist assets xcopy /e /q /y assets "%DIST_DIR%\assets\" >nul
+if exist assets (
+    xcopy /e /q /y assets "%DIST_DIR%\assets\" >nul
+    echo   + assets\
+)
 
 REM Check for mpv.exe
 echo.
@@ -80,10 +113,22 @@ if exist "mpv\mpv.exe" (
     echo        and place mpv.exe in: %DIST_DIR%\mpv\mpv.exe
 )
 
+REM ── 7. Auto-Packaging (ZIP, siap upload ke GitHub Release) ───
+echo.
+echo [INFO] Compressing build into zip...
+powershell -NoProfile -Command ^
+    "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\%DIST_NAME%-Windows.zip' -Force"
+if errorlevel 1 (
+    echo [WARN] ZIP packaging failed. Folder output tetap tersedia.
+) else (
+    echo   + dist\%DIST_NAME%-Windows.zip
+)
+
 echo.
 echo ============================================
 echo   Build complete!
-echo   Output: %DIST_DIR%\
-echo   Run:    %DIST_DIR%\YTPlayer.exe
+echo   Folder Output: %DIST_DIR%\
+echo   File Archive:  dist\%DIST_NAME%-Windows.zip
+echo   Run:           %DIST_DIR%\YTPlayer.exe
 echo ============================================
 pause

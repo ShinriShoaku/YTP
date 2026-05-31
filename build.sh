@@ -4,7 +4,7 @@
 set -e
 
 # === 🛠️ SET VERSI APLIKASI DI SINI ===
-APP_VERSION="v2.1.0-tester"
+APP_VERSION="v3.0.0-tester"
 DIST_NAME="YTPlayer-${APP_VERSION}"
 DIST_DIR="dist/${DIST_NAME}"
 
@@ -59,6 +59,10 @@ echo "  + version.txt (${APP_VERSION})"
 for f in obs_overlay.html obs_nowplaying.html obs_queue.html \
           obs_commands.html obs_subtitle.html obs_requests.html; do
     [ -f "$f" ] && cp "$f" "${DIST_DIR}/overlays/" && echo "  + overlays/$f"
+done
+
+for f in player.html ; do
+     [ -f "$f" ] && cp "$f" "${DIST_DIR}/" && echo "  + $f"
 done
 
 # Copy config / queue stubs (don't overwrite if already exists in dist)
