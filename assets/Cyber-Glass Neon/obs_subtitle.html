@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920,height=1080">
+<title>OBS Subtitle Overlay</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --accent:#f97316; --accent2:#a855f7; --text:#f8fafc;
+  --subtitle-size:34px; --subtitle-width:1500px;
+  --font:'Inter',system-ui,sans-serif;
+  --display:'Space Grotesk',sans-serif;
+  --spring:cubic-bezier(0.34,1.56,0.64,1);
+  --smooth:cubic-bezier(0.4,0,0.2,1);
+}
+
+html, body { width:1920px; height:1080px; overflow:hidden; background:transparent;
+  font-family:var(--font); color:var(--text); -webkit-font-smoothing:antialiased; }
+
+#subtitle-wrap {
+  position:fixed; left:50%; bottom:100px; transform:translateX(-50%);
+  width:min(var(--subtitle-width),92vw); display:flex; flex-direction:column; align-items:center; gap:10px;
+  z-index:9999; pointer-events:none; transition:opacity .4s var(--smooth);
+}
+#subtitle-wrap.hidden { opacity:0; pointer-events:none; }
+
+#sub-pill {
+  position:relative; width:100%; min-height:70px; padding:18px 42px 20px;
+  border-radius:34px;
+  background:linear-gradient(180deg,rgba(12,12,28,0.88),rgba(8,8,20,0.92));
+  border:1px solid rgba(249,115,22,0.25);
+  backdrop-filter:blur(24px) saturate(170%);
+  box-shadow:0 12px 40px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 80px rgba(249,115,22,0.08);
+  overflow:hidden;
+}
+#sub-pill::before {
+  content:''; position:absolute; left:8%; right:8%; top:0; height:1px;
+  background:linear-gradient(90deg,transparent,rgba(249,115,22,0.8),rgba(168,85,247,0.7),transparent);
+}
+#sub-pill::after {
+  content:''; position:absolute; left:20%; right:20%; bottom:-24px; height:30px;
+  background:radial-gradient(ellipse,rgba(249,115,22,0.18) 0%,transparent 75%); filter:blur(10px);
+}
+
+#sub-text {
+  position:relative; z-index:2; width:100%; font-size:var(--subtitle-size); font-weight:800;
+  line-height:1.45; letter-spacing:0.3px; text-align:center; white-space:normal;
+  overflow-wrap:break-word; word-break:break-word; font-family:var(--display);
+  text-shadow:0 2px 12px rgba(0,0,0,1), 0 0 24px rgba(0,0,0,0.6);
+}
+
+.sw { display:inline; color:rgba(241,245,249,0.45); transition:all .1s var(--smooth); }
+.sw.done { color:rgba(241,245,249,0.3); text-shadow:none; }
+.sw.active {
+  color:#ffffff;
+  text-shadow:0 0 20px rgba(249,115,22,1), 0 0 40px rgba(249,115,22,0.85), 0 0 80px rgba(249,115,22,0.3);
+  animation:wordPop .15s var(--spring) both;
+}
+@keyframes wordPop { from{transform:scale(0.88);opacity:0.7} to{transform:scale(1);opacity:1} }
+
+#sub-text.plain .sw { color:var(--text); opacity:1; text-shadow:0 2px 12px rgba(0,0,0,.9); }
+
+#sub-progress {
+  width:min(700px,70%); height:3px; border-radius:999px; overflow:hidden;
+  background:rgba(255,255,255,0.08);
+}
+#sub-progress.hidden { display:none; }
+#sub-progress-bar {
+  width:0%; height:100%;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  background-size:200% 100%;
+  box-shadow:0 0 12px rgba(249,115,22,.7);
+  transition:width 0.1s linear;
+}
+
+#sub-hint { font-size:11px; font-weight:700; letter-spacing:1.6px; text-transform:uppercase;
+  color:rgba(148,163,184,0.7); display:none; text-shadow:0 1px 4px rgba(0,0,0,0.8); }
+#sub-hint.visible { display:block; animation:hintFade .4s var(--smooth); }
+@keyframes hintFade { from{opacity:0;transform:translateY(4px)} to{opacity:0.7;transform:translateY(0)} }
+
+@keyframes pillIn { 0%{opacity:0;transform:translateY(26px) scale(.96)} 60%{opacity:1;transform:translateY(-2px) scale(1.01)} 100%{opacity:1;transform:translateY(0) scale(1)} }
+@keyframes pillOut { from{opacity:1;transform:translateY(0) scale(1)} to{opacity:0;transform:translateY(-18px) scale(.96)} }
+@keyframes glowPulse {
+  0%,100%{box-shadow:0 12px 40px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 80px rgba(249,115,22,0.08);}
+  50%{box-shadow:0 12px 40px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 100px rgba(249,115,22,0.18), 0 0 40px rgba(249,115,22,0.12);}
+}
+#sub-pill.entering { animation:pillIn .45s var(--spring) both; }
+#sub-pill.leaving { animation:pillOut .3s var(--smooth) both; }
+#sub-pill.glowing { animation:glowPulse 1.8s ease-in-out infinite; }
+
+@media (max-width:1600px){ :root{--subtitle-size:30px;--subtitle-width:1300px;} }
+@media (max-width:1200px){ :root{--subtitle-size:26px;--subtitle-width:1100px;} }
+</style>
+</head>
+<body>
+<div id="subtitle-wrap" class="hidden">
+  <div id="sub-pill"><div id="sub-text"></div></div>
+  <div id="sub-progress" class="hidden"><div id="sub-progress-bar"></div></div>
+  <div id="sub-hint"></div>
+</div>
+<script>
+const API='http://localhost:8000';
+let cfg={};
+let visible=false;
+let hideTimer=null;
+let karaokeTimers=[];
+
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function applyConfig(c){
+  cfg=c||{};
+  document.documentElement.style.setProperty('--accent',c.accent_color||'#f97316');
+  document.documentElement.style.setProperty('--accent2',c.accent_color2||'#a855f7');
+  document.documentElement.style.setProperty('--subtitle-size',(c.subtitle_font_size||34)+'px');
+  if(c.show_subtitle===false){clearSubtitle(true);document.getElementById('subtitle-wrap').classList.add('hidden');}
+}
+
+function showSubtitle(text,words,durationMs,songHint){
+  if(cfg.show_subtitle===false)return;
+  if(!text||!text.trim())return;
+  clearAllTimers();
+
+  const wrap=document.getElementById('subtitle-wrap'),pill=document.getElementById('sub-pill');
+  const textEl=document.getElementById('sub-text'),hintEl=document.getElementById('sub-hint');
+  const prog=document.getElementById('sub-progress'),progBar=document.getElementById('sub-progress-bar');
+
+  if(songHint){hintEl.textContent=songHint;hintEl.classList.add('visible');}
+  else hintEl.classList.remove('visible');
+
+  const render=()=>{
+    if(words&&Array.isArray(words)&&words.length>0){
+      textEl.className='';
+      textEl.innerHTML=words.map((w,i)=>`<span class="sw" id="sw${i}">${esc(w.word)}</span>`).join(' ');
+      pill.classList.add('glowing');
+      words.forEach((w,i)=>{
+        if(w.start==null)return;
+        const t1=setTimeout(()=>{
+          const cur=document.getElementById(`sw${i}`);
+          if(cur){cur.classList.remove('done');cur.classList.add('active');}
+          if(i>0){const prev=document.getElementById(`sw${i-1}`);if(prev){prev.classList.remove('active');prev.classList.add('done');}}
+        },w.start*1000);
+        karaokeTimers.push(t1);
+        if(w.end!=null){
+          const t2=setTimeout(()=>{
+            const cur=document.getElementById(`sw${i}`);
+            if(cur){cur.classList.remove('active');cur.classList.add('done');}
+          },w.end*1000);
+          karaokeTimers.push(t2);
+        }
+      });
+    }else{
+      textEl.className='plain';
+      textEl.innerHTML=text.split(' ').map(w=>`<span class="sw active">${esc(w)}</span>`).join(' ');
+      pill.classList.remove('glowing');
+    }
+    if(durationMs>0){
+      prog.classList.remove('hidden');
+      progBar.style.transition='none';progBar.style.width='0%';void progBar.offsetWidth;
+      progBar.style.transition=`width ${durationMs}ms linear`;progBar.style.width='100%';
+    }else prog.classList.add('hidden');
+
+    wrap.classList.remove('hidden');
+    pill.classList.remove('entering','leaving');void pill.offsetWidth;
+    pill.classList.add('entering');
+    pill.addEventListener('animationend',()=>pill.classList.remove('entering'),{once:true});
+    visible=true;
+    hideTimer=setTimeout(()=>clearSubtitle(false),durationMs||4500);
+  };
+
+  if(visible){
+    pill.classList.remove('entering');pill.classList.add('leaving');
+    pill.addEventListener('animationend',()=>{pill.classList.remove('leaving');visible=false;render();},{once:true});
+  }else render();
+}
+
+function clearAllTimers(){
+  if(hideTimer){clearTimeout(hideTimer);hideTimer=null;}
+  karaokeTimers.forEach(t=>clearTimeout(t));karaokeTimers=[];
+}
+
+function clearSubtitle(instant){
+  clearAllTimers();
+  const wrap=document.getElementById('subtitle-wrap'),pill=document.getElementById('sub-pill');
+  const progBar=document.getElementById('sub-progress-bar');
+  progBar.style.width='0%';
+  if(instant||!visible){wrap.classList.add('hidden');pill.classList.remove('glowing','entering','leaving');visible=false;return;}
+  pill.classList.remove('entering','glowing');pill.classList.add('leaving');
+  pill.addEventListener('animationend',()=>{wrap.classList.add('hidden');pill.classList.remove('leaving');visible=false;},{once:true});
+}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('subtitle',e=>{
+    const d=JSON.parse(e.data);
+    showSubtitle(d.text,d.words||null,d.duration_ms||4500,d.song_hint||null);
+  });
+  es.addEventListener('subtitle_clear',()=>clearSubtitle(false));
+  es.addEventListener('player_stopped',()=>clearSubtitle(false));
+  es.addEventListener('overlay_config',e=>applyConfig(JSON.parse(e.data)));
+  es.onerror=()=>{es.close();setTimeout(connectSSE,5000);};
+}
+
+async function init(){
+  try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(err){}
+  connectSSE();
+}
+init();
+</script>
+</body>
+</html>

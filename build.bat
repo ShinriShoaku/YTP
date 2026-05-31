@@ -1,138 +1,134 @@
 @echo off
-REM build.bat – Build YTPlayer (ONE-DIR mode) for Windows
-REM One-dir: YTPlayer.exe = launcher, libs in _internal/ → fewer AV false positives
+REM build.bat – Build YTPlayer standalone for Windows
+REM Usage:  Double-click or run from Developer Command Prompt
 setlocal enabledelayedexpansion
 
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
-
-set "EXE_NAME=YTPlayer"
-set "DIST_DIR=%SCRIPT_DIR%dist\%EXE_NAME%"
+REM === 🛠️ SET VERSI APLIKASI DI SINI ===
+set APP_VERSION=v3.0.0-tester
+set DIST_NAME=YTPlayer-%APP_VERSION%
+set DIST_DIR=dist\%DIST_NAME%
 
 echo ============================================
-echo   YTPlayer Windows Build  [one-dir mode]
+echo   YTPlayer Windows Build (%APP_VERSION%)
 echo ============================================
 
 REM ── 1. Check Python ─────────────────────────────────────────
 where python >nul 2>&1
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo [ERROR] python not found. Install Python 3.10+ and add to PATH.
-    goto :fail
+    pause & exit /b 1
 )
-for /f "tokens=*" %%i in ('python --version 2^>^&1') do echo [INFO] %%i
+for /f "tokens=*" %%i in ('python --version') do echo [INFO] Using %%i
 
 REM ── 2. Virtual-env ──────────────────────────────────────────
-if not exist ".venv\Scripts\activate.bat" (
+if not exist ".venv" (
     echo [INFO] Creating virtualenv...
     python -m venv .venv
-    if %errorlevel% neq 0 ( echo [ERROR] venv creation failed. & goto :fail )
 )
-echo [INFO] Activating virtualenv...
-call ".venv\Scripts\activate.bat"
+call .venv\Scripts\activate.bat
 
 REM ── 3. Install deps ─────────────────────────────────────────
 echo [INFO] Installing dependencies...
-python -m pip install --upgrade pip --quiet
-if %errorlevel% neq 0 ( echo [ERROR] pip upgrade failed. & goto :fail )
+python -m pip install --upgrade pip -q
+python -m pip install -r requirements.txt -q
+python -m pip install pyinstaller -q
 
-python -m pip install -r requirements.txt --quiet
-if %errorlevel% neq 0 ( echo [ERROR] requirements install failed. & goto :fail )
-
-python -m pip install pyinstaller pillow --quiet
-if %errorlevel% neq 0 ( echo [ERROR] pyinstaller/pillow install failed. & goto :fail )
-
-REM ── 4. Generate icon ────────────────────────────────────────
-echo [INFO] Generating icon...
-if not exist "assets" mkdir assets
-python make_icon.py
-if %errorlevel% neq 0 ( echo [WARN] Icon generation failed, continuing without icon. )
-
-REM ── 5. Clean previous build ─────────────────────────────────
+REM ── 4. Clean previous build ─────────────────────────────────
 echo [INFO] Cleaning previous build...
-if exist "build"      rmdir /s /q "build"
-if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
-
-REM ── 6. PyInstaller (one-dir) ────────────────────────────────
-echo [INFO] Running PyInstaller ^(one-dir mode^)...
-pyinstaller ytplayer.spec --noconfirm --clean
-if %errorlevel% neq 0 ( echo [ERROR] PyInstaller failed. & goto :fail )
-
-REM Verify PyInstaller created the folder
-if not exist "%DIST_DIR%\%EXE_NAME%.exe" (
-    echo [ERROR] %DIST_DIR%\%EXE_NAME%.exe not found after build!
-    goto :fail
+if exist build rmdir /s /q build
+REM Bersihkan semua versi lama di dist\
+for /d %%d in (dist\YTPlayer*) do (
+    echo [INFO] Removing old build: %%d
+    rmdir /s /q "%%d"
 )
-echo [OK] %EXE_NAME%.exe built successfully.
+REM Bersihkan arsip zip lama juga
+for %%f in (dist\YTPlayer*.zip) do del /q "%%f"
 
-REM ── 7. Inject overlays, config, mpv into dist folder ────────
-echo [INFO] Adding overlays and config...
+REM ── 5. PyInstaller ──────────────────────────────────────────
+echo [INFO] Running PyInstaller...
+pyinstaller ytplayer.spec --noconfirm --clean
+if errorlevel 1 (
+    echo [ERROR] PyInstaller failed.
+    pause & exit /b 1
+)
 
-if not exist "%DIST_DIR%\overlays" mkdir "%DIST_DIR%\overlays"
-if not exist "%DIST_DIR%\mpv"      mkdir "%DIST_DIR%\mpv"
-if not exist "%DIST_DIR%\assets"   mkdir "%DIST_DIR%\assets"
+REM ── 6. Assemble final folder ─────────────────────────────────
+echo [INFO] Assembling output...
+mkdir "%DIST_DIR%\overlays" 2>nul
+mkdir "%DIST_DIR%\mpv"      2>nul
+mkdir "%DIST_DIR%\assets"   2>nul
 
-REM Overlay HTML files
-for %%f in (obs_overlay obs_nowplaying obs_queue obs_commands obs_subtitle obs_requests) do (
-    if exist "%%f.html" (
-        copy /y "%%f.html" "%DIST_DIR%\overlays\%%f.html" >nul
-        echo   + overlays\%%f.html
-    ) else (
-        echo   [WARN] %%f.html not found
+REM Copy binary (PyInstaller output ke dist\YTPlayer.exe)
+if not exist "dist\YTPlayer.exe" (
+    echo [ERROR] dist\YTPlayer.exe not found. PyInstaller output mismatch?
+    pause & exit /b 1
+)
+copy "dist\YTPlayer.exe" "%DIST_DIR%\YTPlayer.exe" >nul
+echo   + YTPlayer.exe
+
+REM Tanam file versi
+echo %APP_VERSION% > "%DIST_DIR%\version.txt"
+echo   + version.txt (%APP_VERSION%)
+
+REM Copy overlay HTML files
+for %%f in (obs_overlay.html obs_nowplaying.html obs_queue.html obs_commands.html obs_subtitle.html obs_requests.html) do (
+    if exist "%%f" (
+        copy "%%f" "%DIST_DIR%\overlays\%%f" >nul
+        echo   + overlays\%%f
     )
 )
 
-REM config.json – don't overwrite if user already has one in dist
-if not exist "%DIST_DIR%\config.json" (
-    copy /y "config.json" "%DIST_DIR%\config.json" >nul
-    echo   + config.json
+REM Copy player.html (Web Remote UI)
+if exist "player.html" (
+    copy "player.html" "%DIST_DIR%\player.html" >nul
+    echo   + player.html
+) else (
+    echo [WARN] player.html not found. Web UI will not be available.
 )
 
-REM queue.json – use Python to avoid CMD echo adding BOM/spaces
+REM Copy config / queue stubs
+if not exist "%DIST_DIR%\config.json" (
+    copy config.json "%DIST_DIR%\config.json" >nul
+    echo   + config.json
+)
 if not exist "%DIST_DIR%\queue.json" (
-    python -c "open(r'%DIST_DIR%\queue.json','w').write('[]')"
+    echo [] > "%DIST_DIR%\queue.json"
     echo   + queue.json
 )
 
-REM assets (icon etc.)
-if exist "assets" (
-    xcopy /e /i /q /y "assets" "%DIST_DIR%\assets\" >nul
+REM Copy assets
+if exist assets (
+    xcopy /e /q /y assets "%DIST_DIR%\assets\" >nul
     echo   + assets\
 )
 
-REM ── 8. Bundle mpv.exe ────────────────────────────────────────
+REM Check for mpv.exe
 echo.
 if exist "mpv\mpv.exe" (
-    copy /y "mpv\mpv.exe" "%DIST_DIR%\mpv\mpv.exe" >nul
-    echo [OK] mpv.exe bundled.
+    copy "mpv\mpv.exe" "%DIST_DIR%\mpv\mpv.exe" >nul
+    echo [OK] mpv.exe bundled from mpv\mpv.exe
 ) else (
     echo [WARN] mpv\mpv.exe not found.
-    echo        Download: https://mpv.io/installation/ ^(Windows build^)
-    echo        Place at: mpv\mpv.exe  then re-run build.
+    echo        Download mpv from https://mpv.io/installation/
+    echo        and place mpv.exe in: %DIST_DIR%\mpv\mpv.exe
 )
 
-REM ── 9. Summary ───────────────────────────────────────────────
+REM ── 7. Auto-Packaging (ZIP, siap upload ke GitHub Release) ───
 echo.
-echo ============================================
-echo   Build complete!  [one-dir]
-echo.
-echo   Output  : %DIST_DIR%\
-echo   Run     : %DIST_DIR%\%EXE_NAME%.exe
-echo.
-echo   Structure:
-echo     %EXE_NAME%.exe       ^<-- launcher
-echo     _internal\       ^<-- Python libs ^(AV friendly^)
-echo     overlays\        ^<-- OBS HTML files
-echo     config.json
-echo     mpv\mpv.exe
-echo ============================================
-goto :end
+echo [INFO] Compressing build into zip...
+powershell -NoProfile -Command ^
+    "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\%DIST_NAME%-Windows.zip' -Force"
+if errorlevel 1 (
+    echo [WARN] ZIP packaging failed. Folder output tetap tersedia.
+) else (
+    echo   + dist\%DIST_NAME%-Windows.zip
+)
 
-:fail
 echo.
-echo [BUILD FAILED] See errors above.
 echo ============================================
-pause
-exit /b 1
-
-:end
+echo   Build complete!
+echo   Folder Output: %DIST_DIR%\
+echo   File Archive:  dist\%DIST_NAME%-Windows.zip
+echo   Run:           %DIST_DIR%\YTPlayer.exe
+echo ============================================
 pause

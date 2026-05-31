@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>OBS – Commands</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --accent:#f97316; --accent2:#a855f7; --border:rgba(249,115,22,0.25);
+  --text:#f8fafc; --muted:#94a3b8; --opacity:0.88; --radius:14px;
+  --shadow:0 12px 40px rgba(0,0,0,0.65);
+  --font:'Inter',system-ui,sans-serif;
+  --spring:cubic-bezier(0.34,1.56,0.64,1);
+}
+html, body { width:1920px; height:1080px; overflow:hidden; background:transparent;
+  font-family:var(--font); color:var(--text); }
+
+#cmd-panel { position:fixed; top:24px; left:24px; width:260px; z-index:50; transition:all .4s ease; }
+#cmd-panel.pos-right { left:auto; right:24px; }
+#cmd-panel.hidden { opacity:0; transform:translateX(-30px); pointer-events:none; }
+
+.panel-card {
+  background:rgba(12,12,28,var(--opacity)); border:1px solid var(--border); border-radius:var(--radius);
+  overflow:hidden; backdrop-filter:blur(20px) saturate(170%);
+  box-shadow:var(--shadow), inset 0 0 0 1px rgba(255,255,255,0.03);
+  position:relative;
+}
+.panel-card::before { content:''; position:absolute; top:0; left:10%; right:10%; height:1px;
+  background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),transparent); opacity:0.6; }
+.panel-header { display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border-bottom:1px solid rgba(255,255,255,0.05); font-size:11px; text-transform:uppercase;
+  letter-spacing:2px; font-weight:800; color:var(--accent); }
+
+#cmd-rows { padding:12px 16px 10px; display:flex; flex-direction:column; gap:6px; }
+.cmd-row { display:flex; gap:10px; align-items:center; padding:6px 8px; border-radius:8px; transition:all .2s ease; }
+.cmd-row:hover { background:rgba(255,255,255,0.04); transform:translateX(4px); }
+.cmd-tag {
+  background:linear-gradient(135deg,rgba(249,115,22,0.15),rgba(236,72,153,0.1));
+  border:1px solid rgba(249,115,22,0.35); border-radius:8px; padding:3px 10px;
+  font-size:11px; color:#fdba74; font-weight:800; font-family:'SF Mono',monospace;
+  box-shadow:0 0 8px rgba(249,115,22,0.1); transition:all .2s var(--spring);
+}
+.cmd-row:hover .cmd-tag { box-shadow:0 0 12px rgba(249,115,22,0.25); transform:scale(1.05); }
+.cmd-desc { font-size:12px; color:var(--muted); font-weight:500; }
+.cmd-divider { height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.08),transparent); margin:2px 0; }
+
+#cmd-footer { padding:8px 16px 12px; }
+#tiktok-status { display:flex; align-items:center; gap:10px; font-size:11px; color:var(--muted); font-weight:600; }
+#tiktok-dot2 { width:8px; height:8px; border-radius:50%; background:#ef4444; flex-shrink:0; position:relative; transition:all .4s ease; }
+#tiktok-dot2.online { background:#22c55e; box-shadow:0 0 8px rgba(34,197,94,0.5); }
+#tiktok-dot2.online::before, #tiktok-dot2.online::after { content:''; position:absolute; inset:-4px; border-radius:50%; border:1px solid #22c55e; animation:ripple 2s infinite; }
+#tiktok-dot2.online::after { animation-delay:0.6s; }
+@keyframes ripple { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.5);opacity:0} }
+</style>
+</head>
+<body>
+<div id="cmd-panel">
+  <div class="panel-card">
+    <div class="panel-header">💡 Commands</div>
+    <div id="cmd-rows"></div>
+    <div class="cmd-divider"></div>
+    <div id="cmd-footer">
+      <div id="tiktok-status">
+        <div id="tiktok-dot2"></div>
+        <span id="tiktok-label">TikTok Live</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const API='http://localhost:8000';
+let cfg={};
+let tiktokConnected=false;
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function applyConfig(c){
+  cfg=c;
+  document.documentElement.style.setProperty('--accent',c.accent_color||'#f97316');
+  document.documentElement.style.setProperty('--border',hexAlpha(c.accent_color||'#f97316',0.25));
+  document.documentElement.style.setProperty('--opacity',c.opacity_panels||0.88);
+  const cp=document.getElementById('cmd-panel');
+  if(c.position_commands==='hidden'){cp.classList.add('hidden');return;}
+  cp.classList.remove('hidden');
+  cp.classList.toggle('pos-right',c.position_commands==='right');
+}
+function hexAlpha(hex,a){const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);return`rgba(${r},${g},${b},${a})`;}
+
+function renderCommands(cmds){
+  const rows=document.getElementById('cmd-rows');
+  const entries=[{key:'request',label:'Request lagu'},{key:'skip',label:'Vote skip'},{key:'queue',label:'Lihat antrian'}];
+  rows.innerHTML=entries.map(e=>{
+    const list=cmds[e.key]||[];
+    if(!list.length)return'';
+    return`<div class="cmd-row"><span class="cmd-tag">${esc(list[0])}</span><span class="cmd-desc">${esc(e.label)}</span></div>`;
+  }).join('');
+}
+
+function updateTikTok(connected){
+  tiktokConnected=connected;
+  const dot=document.getElementById('tiktok-dot2'),lbl=document.getElementById('tiktok-label');
+  dot.className=connected?'online':'';
+  lbl.textContent=connected?'TikTok Live ✓':'TikTok Offline';
+}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('init',e=>{const d=JSON.parse(e.data);if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);});
+  es.addEventListener('tiktok_status',e=>{updateTikTok(JSON.parse(e.data).connected);});
+  es.addEventListener('overlay_config',e=>{applyConfig(JSON.parse(e.data));});
+  es.onerror=()=>{es.close();setTimeout(connectSSE,5000);};
+}
+async function init(){
+  try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(_){}
+  try{const r=await fetch(`${API}/overlay/state`);if(r.ok){const d=await r.json();if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);}}catch(_){}
+  connectSSE();
+}
+init();
+</script>
+</body>
+</html>
