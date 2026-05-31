@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>OBS – Commands</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  :root {
+    --accent:#f97316; --accent2:#a855f7;
+    --green:#22c55e; --red:#ef4444;
+    --text:#f8fafc; --muted:#64748b; --opacity:0.88; --radius:16px;
+    --shadow:0 16px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+  html, body {
+    width:1920px; height:1080px; overflow:hidden; background:transparent;
+    font-family:'Space Grotesk',sans-serif; color:var(--text);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  #cmd-panel {
+    position:fixed; top:20px; left:20px; width:230px;
+    transition:left .3s, right .3s;
+  }
+  #cmd-panel.pos-right { left:auto; right:20px; }
+  #cmd-panel.hidden { display:none; }
+
+  /* ── CARD ── */
+  .panel-card {
+    background:rgba(6,6,16,var(--opacity));
+    border:1px solid rgba(255,255,255,0.07);
+    border-radius:var(--radius);
+    overflow:hidden;
+    backdrop-filter:blur(24px) saturate(180%);
+    box-shadow:var(--shadow);
+    position:relative;
+  }
+  .panel-card::before {
+    content:'';
+    position:absolute; top:0; left:0; right:0; height:1px;
+    background:linear-gradient(90deg, transparent 0%, var(--accent) 40%, var(--accent2) 60%, transparent 100%);
+    opacity:0.6;
+  }
+
+  /* ── HEADER ── */
+  .panel-header {
+    display:flex; align-items:center; gap:10px;
+    padding:12px 16px 10px;
+    font-size:9px; text-transform:uppercase; letter-spacing:2.5px;
+    font-weight:700; color:rgba(255,255,255,0.5);
+    font-family:'JetBrains Mono',monospace;
+    border-bottom:1px solid rgba(255,255,255,.05);
+  }
+  .header-icon {
+    width:22px; height:22px; border-radius:6px;
+    background:linear-gradient(135deg, var(--accent), var(--accent2));
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px;
+    box-shadow:0 2px 8px rgba(249,115,22,0.4);
+  }
+
+  /* ── COMMAND ROWS ── */
+  #cmd-rows { padding:10px 12px 8px; display:flex; flex-direction:column; gap:5px; }
+
+  .cmd-row {
+    display:flex; align-items:center; gap:8px;
+    animation:fadeUp .35s cubic-bezier(.34,1.2,.64,1) both;
+  }
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(6px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+
+  .cmd-tag {
+    background:rgba(249,115,22,.1);
+    border:1px solid rgba(249,115,22,.25);
+    border-radius:6px; padding:3px 9px;
+    font-size:11px; color:#fb923c; font-weight:700;
+    font-family:'JetBrains Mono',monospace;
+    letter-spacing:0.3px; flex-shrink:0;
+  }
+
+  .cmd-desc {
+    font-size:11px; color:rgba(255,255,255,0.55);
+    font-weight:500;
+  }
+
+  .cmd-divider {
+    height:1px; background:rgba(255,255,255,.05); margin:0 12px;
+  }
+
+  /* ── FOOTER: TIKTOK STATUS ── */
+  #cmd-footer { padding:8px 12px 12px; }
+  #tiktok-status {
+    display:flex; align-items:center; gap:8px;
+    background:rgba(255,255,255,.03);
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:8px; padding:6px 10px;
+  }
+
+  #tiktok-dot2 {
+    width:7px; height:7px; border-radius:50%;
+    background:var(--red); flex-shrink:0;
+    transition:background .3s, box-shadow .3s;
+  }
+  #tiktok-dot2.online {
+    background:var(--green);
+    box-shadow:0 0 6px var(--green), 0 0 12px rgba(34,197,94,0.4);
+    animation:pdot 2s infinite;
+  }
+  @keyframes pdot { 0%,100%{opacity:1;} 50%{opacity:.45;} }
+
+  #tiktok-label {
+    font-size:10px; color:rgba(255,255,255,0.5);
+    font-family:'JetBrains Mono',monospace;
+    font-weight:500; letter-spacing:0.3px;
+  }
+  #tiktok-label.connected { color:var(--green); }
+</style>
+</head>
+<body>
+<div id="cmd-panel">
+  <div class="panel-card">
+    <div class="panel-header">
+      <div class="header-icon">💡</div>
+      Commands
+    </div>
+    <div id="cmd-rows"></div>
+    <div class="cmd-divider"></div>
+    <div id="cmd-footer">
+      <div id="tiktok-status">
+        <div id="tiktok-dot2"></div>
+        <span id="tiktok-label">TikTok Offline</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const API='http://localhost:8000';
+let cfg={};
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function applyConfig(c){
+  cfg=c;
+  document.documentElement.style.setProperty('--accent',c.accent_color||'#f97316');
+  document.documentElement.style.setProperty('--opacity',c.opacity_panels||0.88);
+  const cp=document.getElementById('cmd-panel');
+  if(c.position_commands==='hidden'){cp.classList.add('hidden');return;}
+  cp.classList.remove('hidden');
+  cp.classList.toggle('pos-right',c.position_commands==='right');
+}
+
+function renderCommands(cmds){
+  const rows=document.getElementById('cmd-rows');
+  const entries=[
+    {key:'request',label:'Request lagu',icon:'🎵'},
+    {key:'skip',label:'Vote skip',icon:'⏭'},
+    {key:'queue',label:'Lihat antrian',icon:'📋'},
+  ];
+  rows.innerHTML=entries.map((e,i)=>{
+    const list=cmds[e.key]||[];
+    if(!list.length)return'';
+    return`<div class="cmd-row" style="animation-delay:${i*60}ms">
+      <span class="cmd-tag">${esc(list[0])}</span>
+      <span class="cmd-desc">${e.icon} ${esc(e.label)}</span>
+    </div>`;
+  }).join('');
+}
+
+function updateTikTok(connected){
+  const dot=document.getElementById('tiktok-dot2');
+  const lbl=document.getElementById('tiktok-label');
+  dot.className=connected?'online':'';
+  lbl.textContent=connected?'TikTok Live ✓':'TikTok Offline';
+  lbl.className=connected?'connected':'';
+}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('init',e=>{const d=JSON.parse(e.data);if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);});
+  es.addEventListener('tiktok_status',e=>{updateTikTok(JSON.parse(e.data).connected);});
+  es.addEventListener('overlay_config',e=>{applyConfig(JSON.parse(e.data));});
+  es.onerror=()=>{es.close();setTimeout(connectSSE,5000);};
+}
+async function init(){
+  try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(_){}
+  try{const r=await fetch(`${API}/overlay/state`);if(r.ok){const d=await r.json();if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);}}catch(_){}
+  connectSSE();
+}
+init();
+</script>
+</body>
+</html>

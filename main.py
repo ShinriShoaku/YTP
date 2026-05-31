@@ -62,7 +62,8 @@ async def lifespan(application: FastAPI):
     else:
         print("[Startup] WARNING: mpv/ffplay not found. Place mpv.exe in same folder as main.py")
 
-    _start_tiktok_listener()
+    # TikTok is NOT started automatically – connect manually via the Web UI Settings tab.
+    print("[TikTok] Auto-connect disabled. Use the Web UI Settings tab to connect manually.")
     yield
     # ── shutdown (nothing needed) ──────────────────────────────
 
@@ -422,9 +423,247 @@ except ImportError:
     print("[TikTok] TikTokLive library not installed.")
     print("[TikTok] Install with: pip install TikTokLive")
 
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
+    print("[TTS] edge-tts library not installed.")
+    print("[TTS] Install with: pip install edge-tts")
+
+# ─────────────────────────────────────────────────────────────
+#  TTS Helper
+# ─────────────────────────────────────────────────────────────
+
+_tts_lock = threading.Lock()   # prevent overlapping TTS playback
+
+
+def _get_tts_config() -> dict:
+    """Returns TTS settings from config.json with safe defaults."""
+    cfg = _load_config()
+    defaults = {
+        "enabled": False,
+        "voice": "id-ID-ArdiNeural",
+        "rate": "+0%",
+        "volume": "+0%",
+        "max_length": 100,
+    }
+    return {**defaults, **cfg.get("tts", {})}
+
+
+def _speak_text(text: str):
+    """
+    Generate TTS audio with edge-tts and play it back.
+    Uses pygame.mixer (preferred – does NOT conflict with mpv),
+    with fallback to winsound (Windows) or aplay/ffplay (Linux).
+    Runs synchronously inside a daemon thread – never blocks the TikTok event loop.
+    """
+    if not EDGE_TTS_AVAILABLE:
+        return
+
+    tts_cfg = _get_tts_config()
+    if not tts_cfg.get("enabled", False):
+        return
+
+    max_len = int(tts_cfg.get("max_length", 100))
+    if len(text) > max_len:
+        print(f"[TTS] Skipping – text too long ({len(text)} > {max_len})")
+        return
+
+    voice  = tts_cfg.get("voice",  "id-ID-ArdiNeural")
+    rate   = tts_cfg.get("rate",   "+0%")
+    volume = tts_cfg.get("volume", "+0%")
+
+    import tempfile
+
+    async def _generate(tmp_path: str):
+        communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
+        # Save as MP3 first, then we convert to WAV for pygame compatibility
+        await communicate.save(tmp_path)
+
+    def _find_ffmpeg() -> Optional[str]:
+        """
+        Locate ffmpeg executable.
+        Priority: local folder (same dir as main.py) → system PATH.
+        On Windows also checks ffmpeg/bin subfolder (common portable install).
+        """
+        names = ["ffmpeg.exe", "ffmpeg"] if IS_WINDOWS else ["ffmpeg"]
+        search_dirs = [
+            SCRIPT_DIR,
+            os.path.join(SCRIPT_DIR, "ffmpeg"),
+            os.path.join(SCRIPT_DIR, "ffmpeg", "bin"),
+            os.path.join(SCRIPT_DIR, "mpv"),   # some bundles ship ffmpeg next to mpv
+        ]
+        for d in search_dirs:
+            for name in names:
+                p = os.path.join(d, name)
+                if os.path.isfile(p):
+                    return p
+        # Try system PATH
+        for name in names:
+            try:
+                subprocess.run([name, "-version"], capture_output=True, timeout=3)
+                return name
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        return None
+
+    def _mp3_to_wav(mp3_path: str, wav_path: str) -> bool:
+        """Convert MP3 → WAV. Tries ffmpeg (local or system), then pydub."""
+        ffmpeg = _find_ffmpeg()
+        if ffmpeg:
+            try:
+                result = subprocess.run(
+                    [ffmpeg, "-y", "-i", mp3_path, "-ar", "22050", "-ac", "1", wav_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15
+                )
+                if result.returncode == 0 and os.path.exists(wav_path):
+                    return True
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        # pydub fallback (pydub itself calls ffmpeg internally, but also supports
+        # audioop-based decoding for WAV → WAV without ffmpeg)
+        try:
+            from pydub import AudioSegment
+            AudioSegment.from_mp3(mp3_path).export(wav_path, format="wav")
+            return os.path.exists(wav_path)
+        except Exception:
+            pass
+        return False
+
+    def _play_pygame_wav(wav_path: str) -> bool:
+        """Play WAV with pygame.mixer.Sound – avoids MP3 codec issues entirely."""
+        try:
+            import pygame
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+            sound = pygame.mixer.Sound(wav_path)
+            channel = sound.play()
+            while channel and channel.get_busy():
+                time.sleep(0.05)
+            return True
+        except Exception as e:
+            print(f"[TTS] pygame WAV playback failed: {e}")
+            return False
+
+    def _play_winsound_wav(wav_path: str) -> bool:
+        """Windows built-in winsound – zero dependencies, WAV only."""
+        if not IS_WINDOWS:
+            return False
+        try:
+            import winsound
+            winsound.PlaySound(wav_path, winsound.SND_FILENAME)
+            return True
+        except Exception as e:
+            print(f"[TTS] winsound failed: {e}")
+            return False
+
+    def _find_local_mpv() -> Optional[str]:
+        """Return path to the mpv used for music (guaranteed to exist if app is running)."""
+        # _server_player is already resolved at startup
+        if _server_player and "mpv" in os.path.basename(str(_server_player)):
+            return _server_player
+        return _find_local_player("mpv")  # reuse existing helper
+
+    def _play_system_mp3(path: str) -> bool:
+        """
+        Last-resort: play MP3 directly via a subprocess player.
+        On Windows: tries local mpv (already bundled) with a temp IPC socket name.
+        On Linux: tries ffplay → local/system mpv.
+        --no-input-ipc-server prevents clashing with the music mpv instance.
+        """
+        if IS_WINDOWS:
+            mpv = _find_local_mpv()
+            candidates = []
+            if mpv:
+                candidates.append(
+                    [mpv, "--no-video", "--really-quiet", "--no-terminal",
+                     "--no-input-ipc-server", path]
+                )
+            ffmpeg = _find_ffmpeg()
+            # ffplay ships with ffmpeg on Windows
+            if ffmpeg:
+                ffplay = ffmpeg.replace("ffmpeg.exe", "ffplay.exe").replace("ffmpeg", "ffplay")
+                if os.path.isfile(ffplay):
+                    candidates.append(
+                        [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+                    )
+        elif sys.platform == "darwin":
+            candidates = [
+                ["afplay", path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+            ]
+        else:  # Linux
+            candidates = [
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["mpv", "--no-video", "--really-quiet", "--no-terminal",
+                 "--no-input-ipc-server", path],
+            ]
+
+        for cmd in candidates:
+            try:
+                subprocess.run(cmd, timeout=30,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception as e:
+                print(f"[TTS] {cmd[0]} error: {e}")
+                continue
+        return False
+
+    with _tts_lock:
+        mp3_file = None
+        wav_file = None
+        try:
+            import tempfile as _tf
+            mp3_file = _tf.mktemp(suffix=".mp3")
+            wav_file = _tf.mktemp(suffix=".wav")
+
+            # ── 1. Generate MP3 via edge-tts ───────────────────
+            asyncio.run(_generate(mp3_file))
+
+            # ── 2. Convert MP3 → WAV (for pygame / winsound) ──
+            wav_ok = _mp3_to_wav(mp3_file, wav_file)
+
+            # ── 3. Playback priority chain ─────────────────────
+            #   pygame (WAV) → winsound (WAV, Windows) → system player (MP3)
+            played = False
+            if wav_ok:
+                played = _play_pygame_wav(wav_file)
+            if not played and wav_ok:
+                played = _play_winsound_wav(wav_file)
+            if not played:
+                played = _play_system_mp3(mp3_file)
+            if not played:
+                if IS_WINDOWS:
+                    print("[TTS] No playback method worked on Windows.\n"
+                          "      Place ffmpeg.exe in the same folder as main.py,\n"
+                          "      or install pygame: pip install pygame")
+                else:
+                    print("[TTS] No playback method worked.\n"
+                          "      Install ffmpeg: sudo apt install ffmpeg")
+
+        except Exception as e:
+            print(f"[TTS] Error: {e}")
+        finally:
+            for f in (mp3_file, wav_file):
+                if f and os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+
 _tiktok_client = None
 _tiktok_connected: bool = False
 _tiktok_error: str = ""
+_tiktok_ready_at: float = 0.0   # epoch time when warmup window expires; comments before this are ignored
+_tiktok_stop_flag: bool = True   # starts as True - listener only runs after manual Connect in UI
+_tiktok_stop_event = threading.Event()  # set() to interrupt sleep in reconnect loop
+_tiktok_loop: "Optional[asyncio.AbstractEventLoop]" = None  # asyncio loop used by listener thread
+_tiktok_thread = None            # reference to listener thread
 
 # Per-user request count (reset on each song change)
 _user_request_count: dict = {}
@@ -540,6 +779,22 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str):
             _broadcast("queue_info", {"user": nickname, "queue_count": count})
             return
 
+    # ── TTS: baca komentar biasa (bukan command, bukan diawali @) ──
+    if comment.startswith("@"):
+        return  # mention/reply – skip TTS
+
+    # Juga skip jika ternyata dimulai dengan karakter '#' yang belum terdaftar
+    if comment.startswith("#"):
+        return
+
+    # Jalankan TTS di thread terpisah agar tidak blokir event loop TikTok
+    threading.Thread(
+        target=_speak_text,
+        args=(comment,),
+        daemon=True,
+        name="tts-speak",
+    ).start()
+
 
 def _do_skip(triggered_by: str = ""):
     """Internal skip: advance to next song."""
@@ -574,34 +829,79 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 
+def _stop_tiktok_listener():
+    """Signal the listener loop to stop and kill any active client."""
+    global _tiktok_stop_flag, _tiktok_client, _tiktok_connected, _tiktok_loop
+    _tiktok_stop_flag = True
+    _tiktok_stop_event.set()   # interrupt any sleep() in the reconnect loop
+    _tiktok_connected = False
+    if _tiktok_client is not None:
+        client = _tiktok_client
+        _tiktok_client = None
+        # Invoke client.stop() on its own asyncio loop so it shuts down cleanly
+        loop = _tiktok_loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(_async_stop_client(client), loop)
+        else:
+            try:
+                client.stop()
+            except Exception:
+                pass
+    _broadcast("tiktok_status", {"connected": False, "username": _get_tiktok_username()})
+
+
+async def _async_stop_client(client):
+    """Coroutine that stops the TikTokLiveClient cleanly from its own loop."""
+    try:
+        await client.disconnect()
+    except Exception:
+        try:
+            client.stop()
+        except Exception:
+            pass
+
+
 def _start_tiktok_listener():
     """Start TikTok Live listener in a background thread with its own event loop.
-    Auto-reconnects every 30 s if the connection drops.
+    Auto-reconnects if the connection drops, but stops immediately on _stop_tiktok_listener().
+    Username is re-read from config on every connect attempt so changes take effect.
     """
+    global _tiktok_thread, _tiktok_stop_flag, _tiktok_stop_event
+
     if not TIKTOK_AVAILABLE:
         return
 
-    username = _get_tiktok_username()
-    if not username:
-        print("[TikTok] No username set in config.json – listener not started.")
-        return
+    # Stop any existing thread gracefully first
+    _stop_tiktok_listener()
+    _tiktok_stop_flag = False       # re-arm
+    _tiktok_stop_event.clear()      # reset the interrupt event
 
     def _run():
-        global _tiktok_client, _tiktok_connected, _tiktok_error
+        global _tiktok_client, _tiktok_connected, _tiktok_error, _tiktok_stop_flag, _tiktok_loop
+        retry_delay = 5
+        max_delay   = 120
 
-        while True:                          # ← reconnect loop
-            print(f"[TikTok] Connecting to @{username}…")
+        while not _tiktok_stop_flag:
+            # Re-read username each attempt
+            username = _get_tiktok_username()
+            if not username:
+                print("[TikTok] No username set in config.json - listener waiting...")
+                _tiktok_stop_event.wait(timeout=10)
+                continue
+
+            print(f"[TikTok] Connecting to @{username}...")
             try:
-                # Re-create client each attempt so event handlers are fresh
                 client = TikTokLiveClient(unique_id=username)
                 _tiktok_client = client
 
                 @client.on(ConnectEvent)
                 async def on_connect(event: ConnectEvent):
-                    global _tiktok_connected
+                    global _tiktok_connected, _tiktok_ready_at
                     _tiktok_connected = True
                     _tiktok_error = ""
-                    print(f"[TikTok] ✓ Connected to @{username}")
+                    warmup = float(_config.get("settings", {}).get("tiktok_warmup_seconds", 5))
+                    _tiktok_ready_at = time.time() + warmup
+                    print(f"[TikTok] Connected to @{username} - ignoring comments for {warmup:.0f}s warmup")
                     _broadcast("tiktok_status", {"connected": True, "username": username})
 
                 @client.on(DisconnectEvent)
@@ -613,38 +913,59 @@ def _start_tiktok_listener():
 
                 @client.on(CommentEvent)
                 async def on_comment(event: CommentEvent):
+                    if time.time() < _tiktok_ready_at:
+                        return
                     uid  = str(event.user.unique_id)
                     nick = event.user.nickname or uid
                     text = event.comment or ""
-                    # run_in_executor so yt-dlp search doesn't block TikTok event loop
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None, _process_tiktok_comment, uid, nick, text
                     )
 
-                # client.run() is the correct blocking call for TikTokLive v6+
-                # It manages its own event loop internally.
-                # Do NOT use loop.run_until_complete(client.start()) – that races
-                # with the library's own loop and exits silently.
+                # Capture the asyncio loop so _stop_tiktok_listener can reach it
+                async def _capture_loop():
+                    global _tiktok_loop
+                    _tiktok_loop = asyncio.get_running_loop()
+
+                client.add_listener("connect", _capture_loop)
+
                 client.run()
 
-                # If we get here the library returned normally (user went offline)
-                print(f"[TikTok] Session ended for @{username} (user not live?)")
+                print(f"[TikTok] Session ended for @{username} (user not live or stopped)")
+                retry_delay = 5
 
             except Exception as e:
                 _tiktok_error = str(e)
-                print(f"[TikTok] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()          # full stack trace → no more silent fails
+                err_type = type(e).__name__
+                if "SignAPIError" in err_type or "SIGN_NOT_200" in str(e):
+                    print(f"[TikTok] Sign API error (server-side, not your fault): {e}")
+                elif "UserOfflineError" in err_type:
+                    print(f"[TikTok] Error ({err_type}): {e}")
+                else:
+                    print(f"[TikTok] Error ({err_type}): {e}")
+                    traceback.print_exc()
             finally:
                 _tiktok_connected = False
-                _broadcast("tiktok_status", {"connected": False, "username": username})
+                _tiktok_loop = None
+                _broadcast("tiktok_status", {"connected": False, "username": username, "error": _tiktok_error})
 
-            print("[TikTok] Reconnecting in 30 s…")
-            time.sleep(30)
+            if _tiktok_stop_flag:
+                break
 
-    t = threading.Thread(target=_run, daemon=True, name="tiktok-listener")
-    t.start()
-    print(f"[TikTok] Listener thread started for @{username}")
+            print(f"[TikTok] Reconnecting in {retry_delay}s...")
+            # Use event.wait so disconnect can interrupt the sleep immediately
+            _tiktok_stop_event.wait(timeout=retry_delay)
+            if _tiktok_stop_flag:
+                break
+            retry_delay = min(retry_delay * 2, max_delay)
+
+        print("[TikTok] Listener thread stopped.")
+        _tiktok_stop_event.clear()
+
+    _tiktok_thread = threading.Thread(target=_run, daemon=True, name="tiktok-listener")
+    _tiktok_thread.start()
+    print(f"[TikTok] Listener thread started for @{_get_tiktok_username()}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1475,9 +1796,53 @@ def tiktok_simulate(user: str = Query("testuser"), comment: str = Query(...)):
 
 @app.post("/tiktok/reconnect", tags=["tiktok"])
 def tiktok_reconnect():
-    """Restart the TikTok listener thread."""
+    """Restart the TikTok listener with the current username from config."""
     _start_tiktok_listener()
     return {"message": "TikTok listener restarted", "username": _get_tiktok_username()}
+
+@app.post("/tiktok/disconnect", tags=["tiktok"])
+def tiktok_disconnect():
+    """Stop the TikTok listener and don't reconnect."""
+    _stop_tiktok_listener()
+    return {"message": "TikTok listener stopped", "connected": False}
+
+# ─────────────────────────────────────────────────────────────
+#  Config API  (read & write full config.json from Web UI)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/config", tags=["config"])
+def get_config():
+    """Return the current config.json contents."""
+    return _load_config()
+
+@app.post("/config", tags=["config"])
+def save_config(body: dict):
+    """
+    Overwrite config.json with the supplied payload and hot-reload in-memory config.
+    Preserves _comment keys. Broadcasts overlay changes via SSE.
+    """
+    global _config
+    existing = _load_config()
+
+    def _merge_comments(src: dict, dest: dict) -> dict:
+        out = dict(dest)
+        for k, v in src.items():
+            if k.startswith("_comment") or k.startswith("_obs_"):
+                out.setdefault(k, v)
+            elif isinstance(v, dict) and k in out and isinstance(out[k], dict):
+                out[k] = _merge_comments(v, out[k])
+        return out
+
+    merged = _merge_comments(existing, body)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(merged, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        raise HTTPException(500, detail=f"Could not save config: {e}")
+    _config = merged
+    overlay_merged = {**_DEFAULT_OVERLAY_CONFIG, **merged.get("overlay", {})}
+    _broadcast("overlay_config", overlay_merged)
+    return {"message": "Config saved", "config": merged}
 
 # ─────────────────────────────────────────────────────────────
 #  OBS Overlay SSE
@@ -1550,195 +1915,12 @@ def overlay_state():
 
 @app.get("/player", response_class=HTMLResponse, tags=["player"])
 def player_ui():
-    html = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>YT Audio Remote</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#111827;color:#e5e7eb;min-height:100vh}
-.app{max-width:820px;margin:0 auto;padding:24px 16px}
-h1{text-align:center;color:#f97316;margin-bottom:24px;font-size:1.6rem;letter-spacing:.5px}
-.search-row{display:flex;gap:8px;margin-bottom:20px}
-.search-row input{flex:1;padding:10px 14px;border-radius:8px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;font-size:15px;outline:none}
-.search-row input:focus{border-color:#f97316}
-.btn{padding:10px 18px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
-.btn:hover{opacity:.85}
-.btn-primary{background:#f97316;color:#fff}
-.btn-secondary{background:#374151;color:#e5e7eb}
-.btn-danger{background:#ef4444;color:#fff}
-.btn-sm{padding:4px 10px;font-size:12px;border-radius:5px}
-.btn-shuffle{background:#374151;color:#9ca3af;border:1px solid #374151}
-.btn-shuffle.on{background:#6d28d9;color:#fff;border-color:#7c3aed;box-shadow:0 0 8px #7c3aed55}
-.results-section{margin-bottom:20px}
-.result-card{display:flex;gap:12px;align-items:center;padding:10px 12px;background:#1f2937;border-radius:8px;margin-bottom:8px;border:1px solid #374151}
-.result-card:hover{border-color:#f97316;background:#1a2332}
-.thumb{width:88px;height:50px;object-fit:cover;border-radius:5px;flex-shrink:0;background:#374151}
-.result-meta{flex:1;min-width:0}
-.result-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.result-sub{font-size:11px;color:#9ca3af;margin-top:2px}
-.result-btns{display:flex;gap:6px;flex-shrink:0}
-.player-card{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #374151}
-.player-header{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#f97316;margin-bottom:8px}
-.now-title{font-size:15px;font-weight:600;margin-bottom:14px;min-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px}
-.controls .btn{font-size:16px;padding:12px 22px;border-radius:10px}
-.player-status{text-align:center;margin-top:10px;font-size:12px;color:#9ca3af;min-height:18px}
-.queue-card{background:#1f2937;border-radius:12px;padding:20px;border:1px solid #374151}
-.queue-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.queue-title{font-size:14px;font-weight:700}
-.queue-actions{display:flex;gap:6px;align-items:center}
-.queue-empty{text-align:center;padding:20px;color:#6b7280;font-size:13px}
-.q-item{display:flex;align-items:center;gap:8px;padding:8px;background:#111827;border-radius:6px;margin-bottom:6px;border:1px solid #1f2937}
-.q-pos{width:22px;text-align:center;font-size:12px;color:#6b7280;flex-shrink:0}
-.q-info{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.q-dur{font-size:11px;color:#9ca3af;flex-shrink:0}
-.q-btns{display:flex;gap:4px;flex-shrink:0}
-.icon-btn{background:#374151;color:#e5e7eb;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:13px}
-.icon-btn:hover{background:#4b5563}
-.icon-btn.red{background:#7f1d1d;color:#fca5a5}
-.icon-btn.red:hover{background:#ef4444;color:#fff}
-.status{font-size:11px;color:#6b7280;text-align:center;margin-top:6px}
-.spin{display:inline-block;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-</style>
-</head>
-<body>
-<div class="app">
-  <h1>🎵 YT Audio Remote</h1>
-  <div class="search-row">
-    <input id="q" type="text" placeholder="Search YouTube music…" onkeydown="if(event.key==='Enter') doSearch()">
-    <button class="btn btn-primary" onclick="doSearch()">Search</button>
-  </div>
-  <div id="results" class="results-section"></div>
-  <div class="player-card">
-    <div class="player-header">▶ Now Playing</div>
-    <div id="nowTitle" class="now-title">— nothing playing —</div>
-    <div class="controls">
-      <button class="btn btn-primary" id="playBtn" onclick="togglePlay()">▶ Play</button>
-      <button class="btn btn-secondary" onclick="stopPlayer()">⏹ Stop</button>
-      <button class="btn btn-secondary" onclick="nextSong()">⏭ Next</button>
-    </div>
-    <div class="player-status" id="playerStatus">Idle</div>
-  </div>
-  <div class="queue-card">
-    <div class="queue-header">
-      <div class="queue-title">📋 Queue &nbsp;<span id="qCount" style="color:#f97316">0</span></div>
-      <div class="queue-actions">
-        <button id="shuffleBtn" class="btn btn-shuffle btn-sm" onclick="toggleShuffle()">🔀 Shuffle</button>
-        <button class="btn btn-danger btn-sm" onclick="clearQueue()">Clear All</button>
-      </div>
-    </div>
-    <div id="qList"><div class="queue-empty">Queue is empty</div></div>
-  </div>
-  <div class="status" id="status">Ready</div>
-</div>
-<script>
-const API='';
-let queueData=[], shuffleOn=false, lastServerRunning=false;
-
-async function doSearch(){
-  const q=document.getElementById('q').value.trim(); if(!q) return;
-  setStatus('Searching…');
-  document.getElementById('results').innerHTML='<div style="text-align:center;padding:20px;color:#9ca3af"><span class="spin">⏳</span> Searching…</div>';
-  try{ const data=await api('GET',`/search?q=${enc(q)}&limit=10`); renderResults(data.results||[]); setStatus(`Found ${data.count} results`); }
-  catch(e){ document.getElementById('results').innerHTML=`<div style="color:#ef4444;padding:8px">Error: ${e.message}</div>`; }
-}
-function renderResults(items){
-  if(!items.length){ document.getElementById('results').innerHTML='<div style="color:#9ca3af;text-align:center;padding:10px">No results</div>'; return; }
-  document.getElementById('results').innerHTML=items.map(it=>`
-    <div class="result-card">
-      <img class="thumb" src="${it.thumbnail||''}" onerror="this.style.background='#374151';this.removeAttribute('src')">
-      <div class="result-meta">
-        <div class="result-title" title="${esc(it.title)}">${esc(it.title)}</div>
-        <div class="result-sub">${esc(it.channel||'')}${it.duration?' · '+fmt(it.duration):''}</div>
-      </div>
-      <div class="result-btns">
-        <button class="btn btn-primary btn-sm" onclick="playNow('${esc(it.url)}','${esc(it.title).replace(/'/g,"\\'")}')">▶ Play</button>
-        <button class="btn btn-secondary btn-sm" onclick="addToQueue('${esc(it.url)}','${esc(it.title).replace(/'/g,"\\'")}')">+ Queue</button>
-      </div>
-    </div>`).join('');
-}
-
-async function syncPlayerState(){
-  try{
-    const data=await api('GET','/player/state');
-    document.getElementById('qCount').textContent=data.queue_count;
-    queueData=data.queue||[]; shuffleOn=data.shuffle_mode||false;
-    _updateShuffleBtn(); renderQueue();
-    const nowTitle=document.getElementById('nowTitle'), playBtn=document.getElementById('playBtn'), pStatus=document.getElementById('playerStatus');
-    if(data.current_song){
-      nowTitle.textContent=data.current_song.title;
-      if(data.is_playing&&!data.is_paused){ playBtn.textContent='⏸ Pause'; pStatus.textContent='▶ Playing'; }
-      else if(data.is_paused){ playBtn.textContent='▶ Resume'; pStatus.textContent='⏸ Paused'; }
-      else { playBtn.textContent='▶ Play'; pStatus.textContent='⏹ Stopped'; }
-    } else { nowTitle.textContent='— nothing playing —'; playBtn.textContent='▶ Play'; pStatus.textContent='Idle'; }
-    lastServerRunning=data.server_audio_running;
-  }catch(_){}
-}
-
-async function togglePlay(){
-  const state=await api('GET','/player/state');
-  if(state.is_playing&&!state.is_paused){ await api('POST','/player/pause'); }
-  else if(state.is_paused){ await api('POST','/player/resume'); }
-  else {
-    if(state.current_song){ await api('POST','/player/play',{youtube_url:state.current_song.youtube_url}); }
-    else if(state.queue_count>0){ await api('POST','/queue/next'); }
-    else { setStatus('Queue is empty'); return; }
-  }
-  await syncPlayerState();
-}
-async function stopPlayer(){ await api('POST','/player/stop'); await syncPlayerState(); }
-async function nextSong(){ await api('POST','/queue/next'); await syncPlayerState(); }
-async function playNow(url,title){
-  setStatus('Loading…'); document.getElementById('nowTitle').textContent=title+' – loading…';
-  try{ await api('POST','/player/play',{youtube_url:url}); }catch(_){}
-  await syncPlayerState();
-}
-async function addToQueue(url,title){
-  setStatus('Adding…');
-  try{ const data=await api('POST','/queue/add',{youtube_url:url}); await syncPlayerState(); if(data.auto_played) setStatus('Auto-playing: '+data.song.title); else setStatus(`Queued #${data.queue_position+1}: ${data.song.title}`); }
-  catch(e){ setStatus('Error: '+e.message); }
-}
-
-async function toggleShuffle(){
-  try{ const data=await api('POST','/queue/shuffle'); shuffleOn=data.shuffle_mode; _updateShuffleBtn(); queueData=data.queue||[]; document.getElementById('qCount').textContent=data.queue_count; renderQueue(); setStatus(data.message); }
-  catch(e){ setStatus('Error: '+e.message); }
-}
-function _updateShuffleBtn(){ const btn=document.getElementById('shuffleBtn'); btn.classList.toggle('on',shuffleOn); btn.textContent=shuffleOn?'🔀 Shuffle ON':'🔀 Shuffle'; }
-
-async function refreshQueue(){ await syncPlayerState(); }
-function renderQueue(){
-  if(!queueData.length){ document.getElementById('qList').innerHTML='<div class="queue-empty">Queue is empty</div>'; return; }
-  document.getElementById('qList').innerHTML=queueData.map((item,i)=>{
-    const s=item.song;
-    return `<div class="q-item"><div class="q-pos">${i+1}</div><div class="q-info" title="${esc(s.title)}">${esc(s.title)}</div><div class="q-dur">${s.duration?fmt(s.duration):''}</div><div class="q-btns"><button class="icon-btn" onclick="moveQ(${i},${i-1})" ${i===0?'disabled':''}>↑</button><button class="icon-btn" onclick="moveQ(${i},${i+1})" ${i===queueData.length-1?'disabled':''}>↓</button><button class="icon-btn" onclick="playNow('${s.youtube_url}','${esc(s.title).replace(/'/g,"\\'")}')">▶</button><button class="icon-btn red" onclick="removeQ(${i})">✕</button></div></div>`;
-  }).join('');
-}
-async function moveQ(from,to){ if(to<0||to>=queueData.length) return; await api('PUT','/queue/reorder',{from_position:from,to_position:to}); await refreshQueue(); }
-async function removeQ(pos){ await api('DELETE',`/queue/${pos}`); await refreshQueue(); }
-async function clearQueue(){ await api('POST','/queue/clear'); await syncPlayerState(); setStatus('Queue cleared'); }
-
-async function api(method,path,body){
-  const opts={method,headers:{'Content-Type':'application/json'}};
-  if(body) opts.body=JSON.stringify(body);
-  const r=await fetch(API+path,opts);
-  if(!r.ok){ const t=await r.text(); throw new Error(t); }
-  return r.json();
-}
-const enc=encodeURIComponent;
-const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const fmt=s=>{ const m=Math.floor(s/60),sc=s%60; return `${m}:${String(sc).padStart(2,'0')}`; };
-const setStatus=t=>document.getElementById('status').textContent=t;
-
-syncPlayerState();
-setInterval(syncPlayerState,3000);
-</script>
-</body>
-</html>"""
-    return HTMLResponse(content=html)
+    """Web Remote UI – served from player.html (same directory as main.py)."""
+    path = os.path.join(BASE_DIR, "player.html")
+    if not os.path.exists(path):
+        raise HTTPException(404, detail="player.html not found in base directory")
+    with open(path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1875,6 +2057,17 @@ if __name__ == "__main__":
     print(f"  API docs  : http://localhost:{port}/docs")
     print(f"  OBS (all) : http://localhost:{port}/obs")
     print("=" * 56)
+
+    # Auto-open browser after server is ready
+    def _open_browser():
+        import time as _t
+        _t.sleep(1.5)  # wait for uvicorn to bind
+        try:
+            import webbrowser
+            webbrowser.open(f"http://localhost:{port}/player")
+        except Exception:
+            pass
+    threading.Thread(target=_open_browser, daemon=True).start()
 
     uvicorn.run(
         app,

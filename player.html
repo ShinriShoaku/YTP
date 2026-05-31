@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Audio Remote</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#111827;color:#e5e7eb;min-height:100vh}
+.app{max-width:860px;margin:0 auto;padding:24px 16px}
+h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-spacing:.5px}
+
+/* ── Tabs ── */
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid #374151;padding-bottom:0}
+.tab{padding:8px 18px;cursor:pointer;font-size:13px;font-weight:600;color:#9ca3af;border-radius:6px 6px 0 0;border:1px solid transparent;border-bottom:none;margin-bottom:-1px;transition:all .15s}
+.tab:hover{color:#e5e7eb}
+.tab.active{background:#1f2937;border-color:#374151;color:#f97316}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* ── Buttons ── */
+.btn{padding:10px 18px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
+.btn:hover{opacity:.85}
+.btn-primary{background:#f97316;color:#fff}
+.btn-secondary{background:#374151;color:#e5e7eb}
+.btn-danger{background:#ef4444;color:#fff}
+.btn-success{background:#16a34a;color:#fff}
+.btn-sm{padding:4px 10px;font-size:12px;border-radius:5px}
+.btn-shuffle{background:#374151;color:#9ca3af;border:1px solid #374151}
+.btn-shuffle.on{background:#6d28d9;color:#fff;border-color:#7c3aed;box-shadow:0 0 8px #7c3aed55}
+
+/* ── Player tab ── */
+.search-row{display:flex;gap:8px;margin-bottom:20px}
+.search-row input{flex:1;padding:10px 14px;border-radius:8px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;font-size:15px;outline:none}
+.search-row input:focus{border-color:#f97316}
+.results-section{margin-bottom:20px}
+.result-card{display:flex;gap:12px;align-items:center;padding:10px 12px;background:#1f2937;border-radius:8px;margin-bottom:8px;border:1px solid #374151}
+.result-card:hover{border-color:#f97316;background:#1a2332}
+.thumb{width:88px;height:50px;object-fit:cover;border-radius:5px;flex-shrink:0;background:#374151}
+.result-meta{flex:1;min-width:0}
+.result-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.result-sub{font-size:11px;color:#9ca3af;margin-top:2px}
+.result-btns{display:flex;gap:6px;flex-shrink:0}
+.player-card{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #374151}
+.player-header{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#f97316;margin-bottom:8px}
+.now-title{font-size:15px;font-weight:600;margin-bottom:14px;min-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px}
+.controls .btn{font-size:16px;padding:12px 22px;border-radius:10px}
+.player-status{text-align:center;margin-top:10px;font-size:12px;color:#9ca3af;min-height:18px}
+.queue-card{background:#1f2937;border-radius:12px;padding:20px;border:1px solid #374151}
+.queue-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.queue-title{font-size:14px;font-weight:700}
+.queue-actions{display:flex;gap:6px;align-items:center}
+.queue-empty{text-align:center;padding:20px;color:#6b7280;font-size:13px}
+.q-item{display:flex;align-items:center;gap:8px;padding:8px;background:#111827;border-radius:6px;margin-bottom:6px;border:1px solid #1f2937}
+.q-pos{width:22px;text-align:center;font-size:12px;color:#6b7280;flex-shrink:0}
+.q-info{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-dur{font-size:11px;color:#9ca3af;flex-shrink:0}
+.q-btns{display:flex;gap:4px;flex-shrink:0}
+.icon-btn{background:#374151;color:#e5e7eb;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:13px}
+.icon-btn:hover{background:#4b5563}
+.icon-btn.red{background:#7f1d1d;color:#fca5a5}
+.icon-btn.red:hover{background:#ef4444;color:#fff}
+.status{font-size:11px;color:#6b7280;text-align:center;margin-top:6px}
+.spin{display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Settings tab ── */
+.cfg-section{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #374151}
+.cfg-section-title{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#f97316;margin-bottom:14px;font-weight:700}
+.cfg-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.cfg-row:last-child{margin-bottom:0}
+.cfg-label{font-size:13px;color:#9ca3af;min-width:180px;flex-shrink:0}
+.cfg-label small{display:block;font-size:10px;color:#4b5563;margin-top:1px}
+.cfg-input{flex:1;min-width:140px;padding:7px 10px;border-radius:6px;border:1px solid #374151;background:#111827;color:#e5e7eb;font-size:13px;outline:none}
+.cfg-input:focus{border-color:#f97316}
+.cfg-input[type=number]{max-width:100px}
+.cfg-input[type=color]{padding:2px 4px;height:32px;cursor:pointer;max-width:80px}
+.cfg-checkbox{width:18px;height:18px;cursor:pointer;accent-color:#f97316}
+.cfg-select{flex:1;min-width:120px;padding:7px 10px;border-radius:6px;border:1px solid #374151;background:#111827;color:#e5e7eb;font-size:13px;outline:none;cursor:pointer}
+.cfg-select:focus{border-color:#f97316}
+.tag-input-wrap{flex:1;display:flex;flex-wrap:wrap;gap:6px;background:#111827;border:1px solid #374151;border-radius:6px;padding:6px 8px;min-height:36px;cursor:text}
+.tag-input-wrap:focus-within{border-color:#f97316}
+.tag{display:inline-flex;align-items:center;gap:4px;background:#374151;border-radius:4px;padding:2px 8px;font-size:12px}
+.tag-del{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:14px;line-height:1;padding:0}
+.tag-del:hover{color:#ef4444}
+.tag-new{border:none;background:none;color:#e5e7eb;font-size:12px;outline:none;min-width:80px;flex:1}
+.cfg-save-row{display:flex;gap:10px;align-items:center;margin-top:4px}
+.cfg-toast{font-size:12px;padding:4px 12px;border-radius:5px;display:none}
+.cfg-toast.ok{background:#14532d;color:#86efac;display:inline-block}
+.cfg-toast.err{background:#7f1d1d;color:#fca5a5;display:inline-block}
+.obs-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.obs-link{font-size:11px;padding:4px 10px;background:#111827;border:1px solid #374151;border-radius:5px;color:#9ca3af;cursor:pointer;text-decoration:none;transition:all .15s}
+.obs-link:hover{border-color:#f97316;color:#f97316}
+.tiktok-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:5px;background:#111827;border:1px solid #374151}
+.dot{width:8px;height:8px;border-radius:50%;background:#374151}
+.dot.green{background:#22c55e;box-shadow:0 0 6px #22c55e88}
+.dot.red{background:#ef4444}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>🎵 YT Audio Remote</h1>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('player')">▶ Player</div>
+    <div class="tab" onclick="switchTab('settings')">⚙ Settings</div>
+  </div>
+
+  <!-- ══════════════ PLAYER TAB ══════════════ -->
+  <div id="tab-player" class="tab-panel active">
+    <div class="search-row">
+      <input id="q" type="text" placeholder="Search YouTube music…" onkeydown="if(event.key==='Enter') doSearch()">
+      <button class="btn btn-primary" onclick="doSearch()">Search</button>
+    </div>
+    <div id="results" class="results-section"></div>
+    <div class="player-card">
+      <div class="player-header">▶ Now Playing</div>
+      <div id="nowTitle" class="now-title">— nothing playing —</div>
+      <div class="controls">
+        <button class="btn btn-primary" id="playBtn" onclick="togglePlay()">▶ Play</button>
+        <button class="btn btn-secondary" onclick="stopPlayer()">⏹ Stop</button>
+        <button class="btn btn-secondary" onclick="nextSong()">⏭ Next</button>
+      </div>
+      <div class="player-status" id="playerStatus">Idle</div>
+    </div>
+    <div class="queue-card">
+      <div class="queue-header">
+        <div class="queue-title">📋 Queue &nbsp;<span id="qCount" style="color:#f97316">0</span></div>
+        <div class="queue-actions">
+          <button id="shuffleBtn" class="btn btn-shuffle btn-sm" onclick="toggleShuffle()">🔀 Shuffle</button>
+          <button class="btn btn-danger btn-sm" onclick="clearQueue()">Clear All</button>
+        </div>
+      </div>
+      <div id="qList"><div class="queue-empty">Queue is empty</div></div>
+    </div>
+    <div class="status" id="status">Ready</div>
+  </div>
+
+  <!-- ══════════════ SETTINGS TAB ══════════════ -->
+  <div id="tab-settings" class="tab-panel">
+
+    <!-- TikTok -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🎵 TikTok Live</div>
+      <div class="cfg-row" style="gap:8px;flex-wrap:wrap">
+        <div class="tiktok-status"><span class="dot" id="tiktokDot"></span><span id="tiktokStatusText">–</span></div>
+        <button class="btn btn-success btn-sm" id="btnConnect" onclick="connectTikTok()">▶ Connect</button>
+        <button class="btn btn-danger btn-sm" id="btnDisconnect" onclick="disconnectTikTok()">■ Disconnect</button>
+      </div>
+      <div class="cfg-row" style="margin-top:4px">
+        <span class="cfg-label">Username<small>tanpa @  •  simpan dulu sebelum Connect</small></span>
+        <input class="cfg-input" id="cfg-tiktok_username" type="text" placeholder="nama_akun" oninput="onUsernameInput()">
+        <button class="btn btn-secondary btn-sm" onclick="saveTikTokUsername()">Simpan</button>
+      </div>
+      <div id="tiktokSaveHint" style="font-size:11px;color:#f59e0b;margin-top:4px;padding:0 4px;display:none">
+        ⚠ Username berubah – klik <b>Simpan</b> dulu, baru tekan Connect.
+      </div>
+    </div>
+
+    <!-- Commands -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">💬 Command Keywords</div>
+      <div class="cfg-row"><span class="cfg-label">Request lagu<small>e.g. #req #lagu</small></span><div class="tag-input-wrap" id="tags-cmd-request" onclick="focusTag(this)"></div></div>
+      <div class="cfg-row"><span class="cfg-label">Skip / next<small>e.g. #skip #next</small></span><div class="tag-input-wrap" id="tags-cmd-skip" onclick="focusTag(this)"></div></div>
+      <div class="cfg-row"><span class="cfg-label">Stop<small>e.g. #stop</small></span><div class="tag-input-wrap" id="tags-cmd-stop" onclick="focusTag(this)"></div></div>
+      <div class="cfg-row"><span class="cfg-label">Lihat antrian<small>e.g. #queue #q</small></span><div class="tag-input-wrap" id="tags-cmd-queue" onclick="focusTag(this)"></div></div>
+    </div>
+
+    <!-- Queue Settings -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">📋 Antrian & Voting</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Max request per user</span>
+        <input class="cfg-input" id="cfg-max_queue_per_user" type="number" min="1" max="20">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Skip vote aktif</span>
+        <input class="cfg-checkbox" id="cfg-enable_skip_vote" type="checkbox">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Jumlah vote skip</span>
+        <input class="cfg-input" id="cfg-skip_vote_threshold" type="number" min="1" max="50">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Warmup TikTok (detik)<small>abaikan komentar awal</small></span>
+        <input class="cfg-input" id="cfg-tiktok_warmup_seconds" type="number" min="0" max="60">
+      </div>
+    </div>
+
+    <!-- TTS -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🔊 Text-to-Speech</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Aktifkan TTS</span>
+        <input class="cfg-checkbox" id="cfg-tts_enabled" type="checkbox">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Suara<small>edge-tts voice name</small></span>
+        <select class="cfg-select" id="cfg-tts_voice">
+          <option value="id-ID-ArdiNeural">id-ID-ArdiNeural (pria ID)</option>
+          <option value="id-ID-GadisNeural">id-ID-GadisNeural (wanita ID)</option>
+          <option value="jv-ID-DimasNeural">jv-ID-DimasNeural (pria Jawa)</option>
+          <option value="jv-ID-SitiNeural">jv-ID-SitiNeural (wanita Jawa)</option>
+          <option value="en-US-GuyNeural">en-US-GuyNeural (pria EN)</option>
+          <option value="en-US-JennyNeural">en-US-JennyNeural (wanita EN)</option>
+        </select>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Kecepatan<small>-50% s/d +100%</small></span>
+        <input class="cfg-input" id="cfg-tts_rate" type="text" placeholder="+0%">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Volume<small>-50% s/d +100%</small></span>
+        <input class="cfg-input" id="cfg-tts_volume" type="text" placeholder="+0%">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Max karakter<small>teks lebih panjang di-skip</small></span>
+        <input class="cfg-input" id="cfg-tts_max_length" type="number" min="10" max="500">
+      </div>
+    </div>
+
+    <!-- Overlay Panels -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🖥 OBS Overlay — Panel</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px">
+        <div class="cfg-row"><span class="cfg-label">Now Playing bar</span><input class="cfg-checkbox" id="cfg-ov_show_now_playing" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Antrian</span><input class="cfg-checkbox" id="cfg-ov_show_queue" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Request feed</span><input class="cfg-checkbox" id="cfg-ov_show_request_feed" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Hint commands</span><input class="cfg-checkbox" id="cfg-ov_show_commands_hint" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Skip vote dots</span><input class="cfg-checkbox" id="cfg-ov_show_skip_vote" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Next Up toast</span><input class="cfg-checkbox" id="cfg-ov_show_next_up" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Progress bar</span><input class="cfg-checkbox" id="cfg-ov_show_progress_bar" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Thumbnail</span><input class="cfg-checkbox" id="cfg-ov_show_thumbnail" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Nama requester</span><input class="cfg-checkbox" id="cfg-ov_show_requester" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Channel / artis</span><input class="cfg-checkbox" id="cfg-ov_show_channel" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Indikator TikTok live</span><input class="cfg-checkbox" id="cfg-ov_show_tiktok_dot" type="checkbox"></div>
+        <div class="cfg-row"><span class="cfg-label">Subtitle / lirik</span><input class="cfg-checkbox" id="cfg-ov_show_subtitle" type="checkbox"></div>
+      </div>
+    </div>
+
+    <!-- Overlay Style -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🎨 OBS Overlay — Tampilan</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Warna aksen utama</span>
+        <input class="cfg-input" id="cfg-ov_accent_color" type="color">
+        <input class="cfg-input" id="cfg-ov_accent_color_text" type="text" placeholder="#f97316" style="max-width:90px">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Warna aksen kedua</span>
+        <input class="cfg-input" id="cfg-ov_accent_color2" type="color">
+        <input class="cfg-input" id="cfg-ov_accent_color2_text" type="text" placeholder="#a855f7" style="max-width:90px">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Ukuran font judul (px)</span>
+        <input class="cfg-input" id="cfg-ov_font_size_title" type="number" min="10" max="60">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Ukuran font subtitle (px)</span>
+        <input class="cfg-input" id="cfg-ov_subtitle_font_size" type="number" min="10" max="80">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Opacity panel<small>0.0 – 1.0</small></span>
+        <input class="cfg-input" id="cfg-ov_opacity_panels" type="number" min="0" max="1" step="0.05">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Max baris antrian</span>
+        <input class="cfg-input" id="cfg-ov_max_queue_items" type="number" min="1" max="20">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Max baris request feed</span>
+        <input class="cfg-input" id="cfg-ov_max_request_items" type="number" min="1" max="20">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Posisi panel antrian</span>
+        <select class="cfg-select" id="cfg-ov_position_queue">
+          <option value="right">Kanan</option>
+          <option value="left">Kiri</option>
+        </select>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Posisi panel commands</span>
+        <select class="cfg-select" id="cfg-ov_position_commands">
+          <option value="left">Kiri</option>
+          <option value="right">Kanan</option>
+          <option value="hidden">Sembunyikan</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- OBS Links -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🔗 URL Browser Source OBS</div>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:10px">Klik untuk buka di browser. Copy URL ke Browser Source OBS.</p>
+      <div class="obs-links">
+        <a class="obs-link" href="http://localhost:8000/obs" target="_blank">🖥 Semua (combined)</a>
+        <a class="obs-link" href="http://localhost:8000/obs/nowplaying" target="_blank">▶ Now Playing</a>
+        <a class="obs-link" href="http://localhost:8000/obs/queue" target="_blank">📋 Queue</a>
+        <a class="obs-link" href="http://localhost:8000/obs/commands" target="_blank">💬 Commands</a>
+        <a class="obs-link" href="http://localhost:8000/obs/subtitle" target="_blank">📝 Subtitle</a>
+        <a class="obs-link" href="http://localhost:8000/obs/requests" target="_blank">🎤 Requests</a>
+      </div>
+    </div>
+
+    <!-- Save -->
+    <div class="cfg-save-row">
+      <button class="btn btn-success" onclick="saveSettings()">💾 Simpan Config</button>
+      <button class="btn btn-secondary" onclick="loadSettings()">↺ Reset dari file</button>
+      <span class="cfg-toast" id="cfgToast"></span>
+    </div>
+  </div><!-- /settings -->
+
+</div><!-- /app -->
+
+<script>
+const API='';
+let queueData=[], shuffleOn=false, lastServerRunning=false;
+
+// ── Tab switching ──────────────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const panels=['player','settings'];
+    t.classList.toggle('active', panels[i]===name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p=>{
+    p.classList.toggle('active', p.id==='tab-'+name);
+  });
+  if(name==='settings') loadSettings();
+}
+
+// ── Tag input helpers ──────────────────────────────────────────
+function focusTag(wrap){ wrap.querySelector('.tag-new')?.focus(); }
+
+function renderTags(containerId, values){
+  const wrap = document.getElementById(containerId);
+  wrap.innerHTML = '';
+  values.forEach(v => {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.innerHTML = `${escHtml(v)}<button class="tag-del" title="hapus" onclick="removeTag(this,'${containerId}')">×</button>`;
+    wrap.appendChild(tag);
+  });
+  const inp = document.createElement('input');
+  inp.className = 'tag-new';
+  inp.placeholder = 'tambah…';
+  inp.onkeydown = e => {
+    if((e.key==='Enter'||e.key===','||e.key===' ') && inp.value.trim()){
+      e.preventDefault();
+      const val = inp.value.trim().replace(/,/g,'');
+      if(val){ getTags(containerId).push(val); renderTags(containerId, getTags(containerId)); }
+    } else if(e.key==='Backspace' && !inp.value){
+      const tags = getTags(containerId);
+      if(tags.length){ tags.pop(); renderTags(containerId, tags); }
+    }
+  };
+  wrap.appendChild(inp);
+}
+
+function getTags(containerId){
+  return [...document.getElementById(containerId).querySelectorAll('.tag')]
+    .map(t => t.childNodes[0].textContent.trim());
+}
+
+function removeTag(btn, containerId){
+  const tags = getTags(containerId);
+  const label = btn.parentElement.childNodes[0].textContent.trim();
+  renderTags(containerId, tags.filter(t=>t!==label));
+}
+
+// ── Color sync (picker ↔ text) ─────────────────────────────────
+function syncColor(pickerId, textId){
+  document.getElementById(pickerId).addEventListener('input', e=>{
+    document.getElementById(textId).value = e.target.value;
+  });
+  document.getElementById(textId).addEventListener('input', e=>{
+    const v = e.target.value;
+    if(/^#[0-9a-fA-F]{6}$/.test(v)) document.getElementById(pickerId).value = v;
+  });
+}
+
+// ── Load settings from API ─────────────────────────────────────
+async function loadSettings(){
+  try{
+    const cfg = await api('GET','/config');
+    // TikTok
+    setVal('cfg-tiktok_username', (cfg.tiktok_username||'').replace(/^@/,''));
+    // Commands
+    const cmds = cfg.commands||{};
+    renderTags('tags-cmd-request', cmds.request||[]);
+    renderTags('tags-cmd-skip',    cmds.skip||[]);
+    renderTags('tags-cmd-stop',    cmds.stop||[]);
+    renderTags('tags-cmd-queue',   cmds.queue||[]);
+    // Settings
+    const s = cfg.settings||{};
+    setVal('cfg-max_queue_per_user',     s.max_queue_per_user??3);
+    setChecked('cfg-enable_skip_vote',   s.enable_skip_vote!==false);
+    setVal('cfg-skip_vote_threshold',    s.skip_vote_threshold??5);
+    setVal('cfg-tiktok_warmup_seconds',  s.tiktok_warmup_seconds??5);
+    // TTS
+    const tts = cfg.tts||{};
+    setChecked('cfg-tts_enabled', tts.enabled===true);
+    setVal('cfg-tts_voice',       tts.voice||'id-ID-ArdiNeural');
+    setVal('cfg-tts_rate',        tts.rate||'+0%');
+    setVal('cfg-tts_volume',      tts.volume||'+0%');
+    setVal('cfg-tts_max_length',  tts.max_length??100);
+    // Overlay
+    const ov = cfg.overlay||{};
+    setChecked('cfg-ov_show_now_playing',   ov.show_now_playing!==false);
+    setChecked('cfg-ov_show_queue',         ov.show_queue!==false);
+    setChecked('cfg-ov_show_request_feed',  ov.show_request_feed===true);
+    setChecked('cfg-ov_show_commands_hint', ov.show_commands_hint!==false);
+    setChecked('cfg-ov_show_skip_vote',     ov.show_skip_vote!==false);
+    setChecked('cfg-ov_show_next_up',       ov.show_next_up!==false);
+    setChecked('cfg-ov_show_progress_bar',  ov.show_progress_bar!==false);
+    setChecked('cfg-ov_show_thumbnail',     ov.show_thumbnail!==false);
+    setChecked('cfg-ov_show_requester',     ov.show_requester!==false);
+    setChecked('cfg-ov_show_channel',       ov.show_channel!==false);
+    setChecked('cfg-ov_show_tiktok_dot',    ov.show_tiktok_dot!==false);
+    setChecked('cfg-ov_show_subtitle',      ov.show_subtitle!==false);
+    const ac1 = ov.accent_color||'#f97316';
+    const ac2 = ov.accent_color2||'#a855f7';
+    setVal('cfg-ov_accent_color',       ac1);
+    setVal('cfg-ov_accent_color_text',  ac1);
+    setVal('cfg-ov_accent_color2',      ac2);
+    setVal('cfg-ov_accent_color2_text', ac2);
+    setVal('cfg-ov_font_size_title',    ov.font_size_title??20);
+    setVal('cfg-ov_subtitle_font_size', ov.subtitle_font_size??30);
+    setVal('cfg-ov_opacity_panels',     ov.opacity_panels??0.82);
+    setVal('cfg-ov_max_queue_items',    ov.max_queue_items??6);
+    setVal('cfg-ov_max_request_items',  ov.max_request_items??8);
+    setVal('cfg-ov_position_queue',     ov.position_queue||'right');
+    setVal('cfg-ov_position_commands',  ov.position_commands||'left');
+    // TikTok status
+    _savedTiktokUsername = (cfg.tiktok_username||'').replace(/^@/,'');
+    await refreshTikTokStatus();
+  }catch(e){ showToast('Gagal load: '+e.message, false); }
+}
+
+// ── Save settings ──────────────────────────────────────────────
+async function saveSettings(){
+  const username = getVal('cfg-tiktok_username').replace(/^@/,'');
+  const payload = {
+    tiktok_username: '@'+username,
+    commands: {
+      request: getTags('tags-cmd-request'),
+      skip:    getTags('tags-cmd-skip'),
+      stop:    getTags('tags-cmd-stop'),
+      queue:   getTags('tags-cmd-queue'),
+    },
+    settings: {
+      max_queue_per_user:    parseInt(getVal('cfg-max_queue_per_user'))||3,
+      enable_skip_vote:      getChecked('cfg-enable_skip_vote'),
+      skip_vote_threshold:   parseInt(getVal('cfg-skip_vote_threshold'))||5,
+      tiktok_warmup_seconds: parseFloat(getVal('cfg-tiktok_warmup_seconds'))||5,
+    },
+    tts: {
+      enabled:    getChecked('cfg-tts_enabled'),
+      voice:      getVal('cfg-tts_voice'),
+      rate:       getVal('cfg-tts_rate')||'+0%',
+      volume:     getVal('cfg-tts_volume')||'+0%',
+      max_length: parseInt(getVal('cfg-tts_max_length'))||100,
+    },
+    overlay: {
+      show_now_playing:   getChecked('cfg-ov_show_now_playing'),
+      show_queue:         getChecked('cfg-ov_show_queue'),
+      show_request_feed:  getChecked('cfg-ov_show_request_feed'),
+      show_commands_hint: getChecked('cfg-ov_show_commands_hint'),
+      show_skip_vote:     getChecked('cfg-ov_show_skip_vote'),
+      show_next_up:       getChecked('cfg-ov_show_next_up'),
+      show_progress_bar:  getChecked('cfg-ov_show_progress_bar'),
+      show_thumbnail:     getChecked('cfg-ov_show_thumbnail'),
+      show_requester:     getChecked('cfg-ov_show_requester'),
+      show_channel:       getChecked('cfg-ov_show_channel'),
+      show_tiktok_dot:    getChecked('cfg-ov_show_tiktok_dot'),
+      show_subtitle:      getChecked('cfg-ov_show_subtitle'),
+      max_queue_items:    parseInt(getVal('cfg-ov_max_queue_items'))||6,
+      max_request_items:  parseInt(getVal('cfg-ov_max_request_items'))||8,
+      accent_color:       getVal('cfg-ov_accent_color_text')||getVal('cfg-ov_accent_color'),
+      accent_color2:      getVal('cfg-ov_accent_color2_text')||getVal('cfg-ov_accent_color2'),
+      font_size_title:    parseInt(getVal('cfg-ov_font_size_title'))||20,
+      subtitle_font_size: parseInt(getVal('cfg-ov_subtitle_font_size'))||30,
+      opacity_panels:     parseFloat(getVal('cfg-ov_opacity_panels'))||0.82,
+      position_queue:     getVal('cfg-ov_position_queue'),
+      position_commands:  getVal('cfg-ov_position_commands'),
+    },
+  };
+  try{
+    await api('POST','/config', payload);
+    showToast('✓ Config tersimpan!', true);
+  }catch(e){ showToast('Gagal simpan: '+e.message, false); }
+}
+
+let _savedTiktokUsername = '';
+
+function onUsernameInput(){
+  const cur = getVal('cfg-tiktok_username').trim();
+  const hint = document.getElementById('tiktokSaveHint');
+  hint.style.display = (cur !== _savedTiktokUsername) ? 'block' : 'none';
+}
+
+async function saveTikTokUsername(){
+  const username = getVal('cfg-tiktok_username').replace(/^@/,'').trim();
+  if(!username){ showToast('Username tidak boleh kosong', false); return; }
+  // Patch only the tiktok_username in config
+  try{
+    const cfg = await api('GET','/config');
+    cfg.tiktok_username = '@' + username;
+    await api('POST','/config', cfg);
+    _savedTiktokUsername = username;
+    document.getElementById('tiktokSaveHint').style.display = 'none';
+    showToast('✓ Username disimpan', true);
+  }catch(e){ showToast('Gagal simpan: '+e.message, false); }
+}
+
+async function connectTikTok(){
+  const hint = document.getElementById('tiktokSaveHint');
+  if(hint.style.display !== 'none'){
+    showToast('⚠ Simpan username dulu!', false); return;
+  }
+  const btn = document.getElementById('btnConnect');
+  btn.disabled = true; btn.textContent = '⏳ Connecting…';
+  try{
+    await api('POST','/tiktok/reconnect');
+    showToast('↺ TikTok connecting…', true);
+    setTimeout(refreshTikTokStatus, 3000);
+  }catch(e){ showToast('Error: '+e.message, false); }
+  finally{ btn.disabled=false; btn.textContent='▶ Connect'; }
+}
+
+async function disconnectTikTok(){
+  try{
+    await api('POST','/tiktok/disconnect');
+    showToast('■ TikTok disconnected', true);
+    await refreshTikTokStatus();
+  }catch(e){ showToast('Error: '+e.message, false); }
+}
+
+async function refreshTikTokStatus(){
+  try{
+    const tk = await api('GET','/tiktok/status');
+    const dot = document.getElementById('tiktokDot');
+    const txt = document.getElementById('tiktokStatusText');
+    if(tk.connected){
+      dot.className='dot green';
+      txt.textContent='Connected: @'+tk.username;
+    } else if(tk.username){
+      dot.className='dot red';
+      txt.textContent='Disconnected' + (tk.error ? ' – '+tk.error.substring(0,40) : '');
+    } else {
+      dot.className='dot';
+      txt.textContent='Username belum diset';
+    }
+  }catch(_){}
+}
+
+function showToast(msg, ok){
+  const t = document.getElementById('cfgToast');
+  t.textContent = msg;
+  t.className = 'cfg-toast ' + (ok?'ok':'err');
+  clearTimeout(t._to);
+  t._to = setTimeout(()=>{ t.className='cfg-toast'; }, 3500);
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function setVal(id, v){ const el=document.getElementById(id); if(el) el.value=v; }
+function getVal(id){ return document.getElementById(id)?.value||''; }
+function setChecked(id, v){ const el=document.getElementById(id); if(el) el.checked=!!v; }
+function getChecked(id){ return !!document.getElementById(id)?.checked; }
+
+// ── Player functions ───────────────────────────────────────────
+async function doSearch(){
+  const q=document.getElementById('q').value.trim(); if(!q) return;
+  setStatus('Searching…');
+  document.getElementById('results').innerHTML='<div style="text-align:center;padding:20px;color:#9ca3af"><span class="spin">⏳</span> Searching…</div>';
+  try{ const data=await api('GET',`/search?q=${enc(q)}&limit=10`); renderResults(data.results||[]); setStatus(`Found ${data.count} results`); }
+  catch(e){ document.getElementById('results').innerHTML=`<div style="color:#ef4444;padding:8px">Error: ${e.message}</div>`; }
+}
+function renderResults(items){
+  if(!items.length){ document.getElementById('results').innerHTML='<div style="color:#9ca3af;text-align:center;padding:10px">No results</div>'; return; }
+  document.getElementById('results').innerHTML=items.map(it=>`
+    <div class="result-card">
+      <img class="thumb" src="${it.thumbnail||''}" onerror="this.style.background='#374151';this.removeAttribute('src')">
+      <div class="result-meta">
+        <div class="result-title" title="${escHtml(it.title)}">${escHtml(it.title)}</div>
+        <div class="result-sub">${escHtml(it.channel||'')}${it.duration?' · '+fmt(it.duration):''}</div>
+      </div>
+      <div class="result-btns">
+        <button class="btn btn-primary btn-sm" onclick="playNow('${escHtml(it.url)}','${escHtml(it.title).replace(/'/g,"\\'")}')">▶ Play</button>
+        <button class="btn btn-secondary btn-sm" onclick="addToQueue('${escHtml(it.url)}','${escHtml(it.title).replace(/'/g,"\\'")}')">+ Queue</button>
+      </div>
+    </div>`).join('');
+}
+
+async function syncPlayerState(){
+  try{
+    const data=await api('GET','/player/state');
+    document.getElementById('qCount').textContent=data.queue_count;
+    queueData=data.queue||[]; shuffleOn=data.shuffle_mode||false;
+    _updateShuffleBtn(); renderQueue();
+    const nowTitle=document.getElementById('nowTitle'), playBtn=document.getElementById('playBtn'), pStatus=document.getElementById('playerStatus');
+    if(data.current_song){
+      nowTitle.textContent=data.current_song.title;
+      if(data.is_playing&&!data.is_paused){ playBtn.textContent='⏸ Pause'; pStatus.textContent='▶ Playing'; }
+      else if(data.is_paused){ playBtn.textContent='▶ Resume'; pStatus.textContent='⏸ Paused'; }
+      else { playBtn.textContent='▶ Play'; pStatus.textContent='⏹ Stopped'; }
+    } else { nowTitle.textContent='— nothing playing —'; playBtn.textContent='▶ Play'; pStatus.textContent='Idle'; }
+    lastServerRunning=data.server_audio_running;
+  }catch(_){}
+}
+
+async function togglePlay(){
+  const state=await api('GET','/player/state');
+  if(state.is_playing&&!state.is_paused){ await api('POST','/player/pause'); }
+  else if(state.is_paused){ await api('POST','/player/resume'); }
+  else {
+    if(state.current_song){ await api('POST','/player/play',{youtube_url:state.current_song.youtube_url}); }
+    else if(state.queue_count>0){ await api('POST','/queue/next'); }
+    else { setStatus('Queue is empty'); return; }
+  }
+  await syncPlayerState();
+}
+async function stopPlayer(){ await api('POST','/player/stop'); await syncPlayerState(); }
+async function nextSong(){ await api('POST','/queue/next'); await syncPlayerState(); }
+async function playNow(url,title){
+  setStatus('Loading…'); document.getElementById('nowTitle').textContent=title+' – loading…';
+  try{ await api('POST','/player/play',{youtube_url:url}); }catch(_){}
+  await syncPlayerState();
+}
+async function addToQueue(url,title){
+  setStatus('Adding…');
+  try{ const data=await api('POST','/queue/add',{youtube_url:url}); await syncPlayerState(); if(data.auto_played) setStatus('Auto-playing: '+data.song.title); else setStatus(`Queued #${data.queue_position+1}: ${data.song.title}`); }
+  catch(e){ setStatus('Error: '+e.message); }
+}
+async function toggleShuffle(){
+  try{ const data=await api('POST','/queue/shuffle'); shuffleOn=data.shuffle_mode; _updateShuffleBtn(); queueData=data.queue||[]; document.getElementById('qCount').textContent=data.queue_count; renderQueue(); setStatus(data.message); }
+  catch(e){ setStatus('Error: '+e.message); }
+}
+function _updateShuffleBtn(){ const btn=document.getElementById('shuffleBtn'); btn.classList.toggle('on',shuffleOn); btn.textContent=shuffleOn?'🔀 Shuffle ON':'🔀 Shuffle'; }
+async function refreshQueue(){ await syncPlayerState(); }
+function renderQueue(){
+  if(!queueData.length){ document.getElementById('qList').innerHTML='<div class="queue-empty">Queue is empty</div>'; return; }
+  document.getElementById('qList').innerHTML=queueData.map((item,i)=>{
+    const s=item.song;
+    return `<div class="q-item"><div class="q-pos">${i+1}</div><div class="q-info" title="${escHtml(s.title)}">${escHtml(s.title)}</div><div class="q-dur">${s.duration?fmt(s.duration):''}</div><div class="q-btns"><button class="icon-btn" onclick="moveQ(${i},${i-1})" ${i===0?'disabled':''}>↑</button><button class="icon-btn" onclick="moveQ(${i},${i+1})" ${i===queueData.length-1?'disabled':''}>↓</button><button class="icon-btn" onclick="playNow('${s.youtube_url}','${escHtml(s.title).replace(/'/g,"\\'")}')">▶</button><button class="icon-btn red" onclick="removeQ(${i})">✕</button></div></div>`;
+  }).join('');
+}
+async function moveQ(from,to){ if(to<0||to>=queueData.length) return; await api('PUT','/queue/reorder',{from_position:from,to_position:to}); await refreshQueue(); }
+async function removeQ(pos){ await api('DELETE',`/queue/${pos}`); await refreshQueue(); }
+async function clearQueue(){ await api('POST','/queue/clear'); await syncPlayerState(); setStatus('Queue cleared'); }
+
+async function api(method,path,body){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  const r=await fetch(API+path,opts);
+  if(!r.ok){ const t=await r.text(); throw new Error(t); }
+  return r.json();
+}
+const enc=encodeURIComponent;
+const escHtml=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmt=s=>{ const m=Math.floor(s/60),sc=s%60; return `${m}:${String(sc).padStart(2,'0')}`; };
+const setStatus=t=>document.getElementById('status').textContent=t;
+
+// ── Notification toast (bottom-right, separate from cfg toast) ──
+let _notifTimeout = null;
+function showNotif(msg, ok=true, duration=4000){
+  let el = document.getElementById('notifToast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'notifToast';
+    el.style.cssText = [
+      'position:fixed','bottom:20px','right:20px','z-index:9999',
+      'padding:10px 16px','border-radius:8px','font-size:13px','font-weight:600',
+      'max-width:320px','box-shadow:0 4px 12px #0008','transition:opacity .3s',
+      'opacity:0','pointer-events:none'
+    ].join(';');
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.background = ok ? '#14532d' : '#7f1d1d';
+  el.style.color = ok ? '#86efac' : '#fca5a5';
+  el.style.border = `1px solid ${ok ? '#16a34a' : '#ef4444'}`;
+  el.style.opacity = '1';
+  clearTimeout(_notifTimeout);
+  _notifTimeout = setTimeout(()=>{ el.style.opacity='0'; }, duration);
+}
+
+// ── SSE listener for TikTok status events ──────────────────────
+(function startSSE(){
+  if(!window.EventSource) return; // browser too old
+  const es = new EventSource(API + '/overlay/events');
+
+  es.addEventListener('tiktok_status', e => {
+    try{
+      const d = JSON.parse(e.data);
+      const dot = document.getElementById('tiktokDot');
+      const txt = document.getElementById('tiktokStatusText');
+      if(d.connected){
+        if(dot) { dot.className='dot green'; }
+        if(txt) { txt.textContent='Connected: @'+d.username; }
+        showNotif('✓ TikTok terhubung ke @'+d.username, true);
+      } else {
+        if(dot) { dot.className='dot red'; }
+        if(txt) { txt.textContent='Disconnected'+(d.error?' – '+d.error.substring(0,40):''); }
+        // Only show error notif if there's actually an error message (not a clean disconnect)
+        if(d.error && !d.error.includes('UserOfflineError')){
+          showNotif('⚠ TikTok: '+ d.error.substring(0,60), false, 6000);
+        } else if(d.error && d.error.includes('UserOfflineError')){
+          showNotif('⚠ TikTok: @'+(d.username||'?')+' sedang tidak live', false, 5000);
+        }
+      }
+    }catch(_){}
+  });
+
+  es.addEventListener('init', e => {
+    try{
+      const d = JSON.parse(e.data);
+      const dot = document.getElementById('tiktokDot');
+      const txt = document.getElementById('tiktokStatusText');
+      if(d.tiktok_connected){
+        if(dot) dot.className='dot green';
+        if(txt) txt.textContent='Connected';
+      } else {
+        if(dot) dot.className='dot red';
+        if(txt && txt.textContent==='–') txt.textContent='Disconnected';
+      }
+    }catch(_){}
+  });
+
+  es.onerror = () => {}; // silent – reconnects automatically
+})();
+
+// ── Init ───────────────────────────────────────────────────────
+syncColor('cfg-ov_accent_color','cfg-ov_accent_color_text');
+syncColor('cfg-ov_accent_color2','cfg-ov_accent_color2_text');
+
+syncPlayerState();
+setInterval(syncPlayerState,3000);
+</script>
+</body>
+</html>

@@ -27,17 +27,19 @@
     text-align:center;
     color:#fff;
     letter-spacing:-0.5px;
+    word-spacing:0.15em;
     filter:drop-shadow(0 2px 20px rgba(0,0,0,1)) drop-shadow(0 0 40px rgba(0,0,0,0.9));
     white-space:normal;overflow-wrap:break-word;
   }
 
-  /* Karaoke words */
+  /* Plain mode words */
   .sw{
-    display:inline;
+    display:inline-block;
     color:rgba(255,255,255,0.25);
     transition:color .06s,transform .06s;
-    display:inline-block;
+    margin-right:0.28em;
   }
+  .sw:last-child{margin-right:0;}
   .sw.done{color:rgba(255,255,255,0.18);}
   .sw.active{
     color:#fff;
@@ -49,9 +51,9 @@
   }
   @keyframes wPop{from{transform:scale(.85);}to{transform:scale(1.12);}}
 
-  /* Plain mode: all lit up */
-  #sub-text.plain .sw{
-    color:#fff;filter:none;transform:none;
+  /* Plain mode: teks langsung, tanpa span */
+  #sub-text.plain{
+    color:#fff;
   }
 
   /* ── PROGRESS: thin line, no pill ── */
@@ -124,7 +126,7 @@ function showSub(text,words,durMs,hint){
       });
     }else{
       textEl.className='plain';
-      textEl.innerHTML=text.split(' ').map(w=>`<span class="sw active">${esc(w)}</span>`).join(' ');
+      textEl.textContent=text;
     }
 
     if(durMs>0){

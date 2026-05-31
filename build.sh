@@ -3,11 +3,13 @@
 # Usage:  chmod +x build.sh && ./build.sh
 set -e
 
-DIST_NAME="YTPlayer"
+# === 🛠️ SET VERSI APLIKASI DI SINI ===
+APP_VERSION="v2.1.0-tester"
+DIST_NAME="YTPlayer-${APP_VERSION}"
 DIST_DIR="dist/${DIST_NAME}"
 
 echo "============================================"
-echo "  YTPlayer Linux Build"
+echo "  YTPlayer Linux Build (${APP_VERSION})"
 echo "============================================"
 
 # ── 1. Check Python ──────────────────────────────────────────
@@ -33,7 +35,7 @@ pip install pyinstaller -q
 
 # ── 4. Clean previous build ──────────────────────────────────
 echo "[INFO] Cleaning previous build..."
-rm -rf build/ "${DIST_DIR}"
+rm -rf build/ "dist/YTPlayer*" # Membersihkan folder dist versi lama juga
 
 # ── 5. PyInstaller ───────────────────────────────────────────
 echo "[INFO] Running PyInstaller..."
@@ -45,9 +47,13 @@ mkdir -p "${DIST_DIR}/overlays"
 mkdir -p "${DIST_DIR}/mpv"
 mkdir -p "${DIST_DIR}/assets"
 
-# Copy the compiled binary
+# Copy the compiled binary (PyInstaller default output biasanya di dist/ytplayer)
 cp "dist/ytplayer" "${DIST_DIR}/ytplayer"
 chmod +x "${DIST_DIR}/ytplayer"
+
+# [BONUS] Tanam file versi ke dalam folder rilis
+echo "${APP_VERSION}" > "${DIST_DIR}/version.txt"
+echo "  + version.txt (${APP_VERSION})"
 
 # Copy overlay HTML files
 for f in obs_overlay.html obs_nowplaying.html obs_queue.html \
@@ -68,9 +74,18 @@ echo "[NOTE] On Linux, mpv is loaded from your system PATH by default."
 echo "       If you want to bundle a local mpv binary, copy it to:"
 echo "       ${DIST_DIR}/mpv/mpv"
 
+# ── 7. Auto-Packaging (Biar siap upload ke GitHub Release) ────
+echo ""
+echo "[INFO] Compressing build into tar.gz..."
+cd dist
+tar -czf "${DIST_NAME}-Linux.tar.gz" "${DIST_NAME}"
+cd ..
+echo "  + dist/${DIST_NAME}-Linux.tar.gz"
+
 echo ""
 echo "============================================"
 echo "  Build complete!"
-echo "  Output: ${DIST_DIR}/"
-echo "  Run:    ./${DIST_DIR}/ytplayer"
+echo "  Folder Output: ${DIST_DIR}/"
+echo "  File Archive:  dist/${DIST_NAME}-Linux.tar.gz"
+echo "  Run:           ./${DIST_DIR}/ytplayer"
 echo "============================================"

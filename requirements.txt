@@ -12,3 +12,7 @@ TikTokLive>=6.2.0
 # HTTP client used by TikTokLive / yt-dlp
 httpx>=0.27.0
 websockets>=12.0
+
+# Text-to-Speech & Audio Playback (Chat Reader Feature)
+edge-tts>=6.1.0
+pygame>=2.5.0
