@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>OBS – TikTok Live Chat</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --accent: #f97316;
+  --accent2: #a855f7;
+  --border: rgba(249,115,22,0.28);
+  --green: #22c55e;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --op: 0.92;
+  --r: 14px;
+  --w: 330px;
+}
+
+html, body {
+  width: 1920px; height: 1080px;
+  overflow: hidden; background: transparent;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: var(--text);
+}
+
+/* ─── Panel ──────────────────────────────────────────────── */
+#chat-panel {
+  position: fixed; top: 20px; left: 20px;
+  width: var(--w);
+  height: 350px;
+  display: flex; flex-direction: column;
+  pointer-events: auto;
+  resize: both;
+  overflow: auto;
+  min-width: 220px; max-width: 600px;
+  min-height: 100px; max-height: 900px;
+}
+#chat-panel.pos-right { left: auto; right: 20px; }
+#chat-panel.hidden { display: none; }
+
+/* ─── Header ─────────────────────────────────────────────── */
+.chat-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  background: rgba(8,8,20,var(--op));
+  border: 1px solid var(--border); border-bottom: none;
+  border-radius: var(--r) var(--r) 0 0;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1.4px;
+  color: var(--accent);
+  flex-shrink: 0;
+  cursor: default;
+  user-select: none;
+  /* shimmer line at bottom of header */
+  position: relative;
+}
+.chat-header::after {
+  content: '';
+  position: absolute; bottom: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.5;
+  animation: shimmerLine 3s ease-in-out infinite;
+}
+@keyframes shimmerLine {
+  0%,100% { opacity: 0.2; transform: scaleX(0.6); }
+  50%      { opacity: 0.7; transform: scaleX(1); }
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 7px var(--green);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.live-dot.off { background: #4b5563; box-shadow: none; animation: none; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.hdr-count { margin-left: auto; font-size: 10px; color: var(--muted); text-transform: none; letter-spacing: 0; }
+
+/* ─── Feed ───────────────────────────────────────────────── */
+#chat-feed {
+  background: rgba(6,6,16,var(--op));
+  border: 1px solid var(--border); border-top: 1px solid rgba(255,255,255,.06);
+  border-radius: 0 0 var(--r) var(--r);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  padding: 6px 8px 10px;
+  display: flex; flex-direction: column; gap: 3px;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+#chat-feed::-webkit-scrollbar { display: none; }
+
+/* ─── Chat row ───────────────────────────────────────────── */
+.msg {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 5px 7px 5px 5px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.07);
+  position: relative; overflow: hidden;
+  /* slide in from left with spring */
+  animation: msgIn .4s cubic-bezier(.22,.68,0,1.2) both;
+  transform-origin: left center;
+}
+
+/* accent left bar */
+.msg::before {
+  content: '';
+  position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px;
+  border-radius: 2px;
+  background: var(--msg-accent, var(--accent));
+  opacity: 0.7;
+}
+
+/* flash sweep on enter */
+.msg::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(249,115,22,.12) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: flashSweep .6s ease forwards;
+  pointer-events: none;
+  border-radius: 9px;
+}
+
+@keyframes msgIn {
+  0%   { opacity:0; transform: translateX(-18px) scaleY(.85); }
+  60%  { transform: translateX(4px) scaleY(1.02); }
+  100% { opacity:1; transform: translateX(0) scaleY(1); }
+}
+@keyframes flashSweep {
+  0%   { transform: translateX(-100%); opacity: 1; }
+  100% { transform: translateX(200%);  opacity: 0; }
+}
+
+.msg.out {
+  animation: msgOut .35s ease forwards;
+}
+@keyframes msgOut {
+  0%   { opacity:1; transform: translateX(0) scaleY(1); max-height: 80px; }
+  40%  { transform: translateX(8px); }
+  100% { opacity:0; transform: translateX(20px) scaleY(0.7); max-height: 0; padding: 0; margin: 0; }
+}
+
+/* ─── Avatar ─────────────────────────────────────────────── */
+.av {
+  width: 30px; height: 30px; border-radius: 50%;
+  flex-shrink: 0; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  border: 1.5px solid rgba(255,255,255,.18);
+  animation: avPop .5s cubic-bezier(.22,.68,0,1.5) both;
+  animation-delay: .1s;
+}
+@keyframes avPop {
+  0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
+  70%  { transform: scale(1.15) rotate(5deg); }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.av img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+  opacity: 0; transition: opacity .3s;
+}
+.av img.loaded { opacity: 1; }
+
+/* ─── Content ────────────────────────────────────────────── */
+.msg-body { flex:1; min-width:0; }
+.msg-meta { display:flex; align-items:center; gap:5px; margin-bottom:2px; }
+.msg-name {
+  font-size: 11px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 160px;
+}
+.badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 4px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .4px; flex-shrink:0;
+}
+.badge-mod { background:#166534; color:#86efac; }
+.badge-sub { background:#312e81; color:#a5b4fc; }
+.msg-time { font-size:9px; color:var(--muted); margin-left:auto; opacity:.55; flex-shrink:0; }
+.msg-text { font-size:12.5px; line-height:1.45; word-break:break-word; overflow-wrap:anywhere; color:var(--text); }
+
+/* ─── Emoji pop in text ──────────────────────────────────── */
+.ep {
+  display: inline-block;
+  animation: epop .45s cubic-bezier(.22,.68,0,1.5) both;
+}
+@keyframes epop {
+  0%  { transform: scale(0) rotate(-20deg); opacity:0 }
+  65% { transform: scale(1.3) rotate(6deg) }
+  100%{ transform: scale(1) rotate(0); opacity:1 }
+}
+
+/* ─── Event banner (gift / like / follow) ────────────────── */
+.ev-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px; border-radius: 9px;
+  position: relative; overflow: hidden;
+  animation: bannerIn .45s cubic-bezier(.22,.68,0,1.2) both;
+}
+.ev-banner::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,.08) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: flashSweep .7s ease .1s forwards;
+  pointer-events: none;
+}
+@keyframes bannerIn {
+  0%   { opacity:0; transform: translateY(-10px) scaleX(.92); }
+  60%  { transform: translateY(3px) scaleX(1.01); }
+  100% { opacity:1; transform: none; }
+}
+.ev-banner.ev-like   { background: rgba(239,68,68,.18);  border:1px solid rgba(239,68,68,.4); }
+.ev-banner.ev-gift   { background: rgba(168,85,247,.18); border:1px solid rgba(168,85,247,.4); }
+.ev-banner.ev-follow { background: rgba(34,197,94,.16);  border:1px solid rgba(34,197,94,.35); }
+.ev-banner.out { animation: msgOut .35s ease forwards; }
+.ev-icon { font-size:15px; flex-shrink:0; }
+.ev-body { flex:1; min-width:0; }
+.ev-name { font-size:11px; font-weight:700; }
+.ev-text { font-size:11px; color:var(--muted); margin-top:1px; }
+
+/* ─── Floating particles layer ───────────────────────────── */
+#fx-layer {
+  position: fixed; inset: 0;
+  pointer-events: none; overflow: hidden; z-index: 999;
+}
+
+/* Emoji particles */
+.fx-emoji {
+  position: absolute;
+  animation: fxFloat var(--dur,2.4s) ease-out forwards;
+  pointer-events: none; will-change: transform, opacity;
+  font-size: var(--sz, 20px);
+}
+@keyframes fxFloat {
+  0%   { transform: translateY(0) scale(1) rotate(0deg);   opacity: 1; }
+  70%  { opacity: .9; }
+  100% { transform: translateY(-220px) scale(.3) rotate(var(--rot,25deg)); opacity: 0; }
+}
+
+/* Heart particles — bloom in all directions */
+.fx-heart {
+  position: absolute;
+  color: #ef4444;
+  font-size: var(--sz, 22px);
+  animation: fxHeart var(--dur,2.2s) ease-out forwards;
+  pointer-events: none; will-change: transform, opacity;
+  filter: drop-shadow(0 0 6px rgba(239,68,68,.7));
+}
+@keyframes fxHeart {
+  0%   { transform: translate(0,0) scale(0) rotate(var(--r0,-15deg)); opacity:1; }
+  25%  { transform: translate(calc(var(--tx,30px)*.4), calc(var(--ty,-40px)*.4)) scale(1.3) rotate(var(--r1,8deg)); opacity:1; }
+  60%  { transform: translate(var(--tx,30px), var(--ty,-80px)) scale(1) rotate(var(--r2,20deg)); opacity:.9; }
+  100% { transform: translate(var(--tx2,50px), var(--ty2,-150px)) scale(.1) rotate(30deg); opacity:0; }
+}
+
+/* Star burst */
+.fx-star {
+  position: absolute;
+  animation: fxStar var(--dur,1.8s) ease-out forwards;
+  pointer-events: none; will-change: transform, opacity;
+  font-size: var(--sz, 18px);
+  filter: drop-shadow(0 0 5px rgba(250,204,21,.8));
+}
+@keyframes fxStar {
+  0%   { transform: translate(0,0) scale(0); opacity:1; }
+  40%  { transform: translate(var(--tx,30px), var(--ty,-60px)) scale(1.3); opacity:1; }
+  100% { transform: translate(var(--tx2,60px), var(--ty2,-140px)) scale(.1); opacity:0; }
+}
+</style>
+</head>
+<body>
+<div id="fx-layer"></div>
+
+<div id="chat-panel">
+  <div class="chat-header">
+    <span>💬</span>
+    <span>Live Chat</span>
+    <div class="live-dot off" id="ldot"></div>
+    <span class="hdr-count" id="hcnt">—</span>
+  </div>
+  <div id="chat-feed"></div>
+</div>
+
+<script>
+'use strict';
+const API      = 'http://localhost:8000';
+const MAX_MSGS = 14;          // max rows visible
+const FADE_MS  = 20000;       // auto-fade after N ms (0 = off)
+const CACHE_MAX = 150;        // max avatar entries in memory
+
+/* ── Avatar cache ─────────────────────────────────────────
+   Map<userId, { src: string, ts: number }>
+   'src' is the proxied URL (no blob — blobs survive page reload issues) */
+const _avCache  = new Map();   // userId → proxied src string
+const _avPending = new Map();  // userId → Promise<string>  (dedup in-flight fetches)
+
+/* ── Counters ─────────────────────────────────────────────*/
+let _totalCount = 0;
+
+/* ── Fade timers ──────────────────────────────────────────
+   WeakRef-based: no strong reference to DOM elements */
+const _fadeTimers = [];   // [{wr: WeakRef<el>, t: timeoutId}]
+
+/* ═══════════════════════════════════════════════════════
+   AVATAR LOADING
+   Uses /proxy/avatar on the local server so CORS is bypassed.
+   Falls back to gradient initial if proxy fails.
+   ═══════════════════════════════════════════════════════ */
+function _proxySrc(url) {
+  if (!url) return '';
+  return `${API}/proxy/avatar?url=${encodeURIComponent(url)}`;
+}
+
+async function loadAvatar(userId, rawUrl) {
+  if (!rawUrl) return '';
+
+  // 1. Cache hit — return immediately
+  const cached = _avCache.get(userId);
+  if (cached) return cached.src;
+
+  // 2. Dedup — if already fetching for this user, wait on same promise
+  if (_avPending.has(userId)) return _avPending.get(userId);
+
+  const proxySrc = _proxySrc(rawUrl);
+
+  const p = new Promise(resolve => {
+    const img = new Image();
+    img.decoding = 'async';
+
+    img.onload = () => {
+      // Evict oldest if over limit
+      if (_avCache.size >= CACHE_MAX) {
+        const oldest = [..._avCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
+        if (oldest) _avCache.delete(oldest[0]);
+      }
+      _avCache.set(userId, { src: proxySrc, ts: Date.now() });
+      _avPending.delete(userId);
+      resolve(proxySrc);
+    };
+
+    img.onerror = () => {
+      // Proxy fetch failed — evict any stale cache entry and fall back gracefully
+      _avCache.delete(userId);
+      _avPending.delete(userId);
+      resolve('');   // fall back to gradient initial
+    };
+
+    // Set src AFTER handlers (avoids race with browser cache)
+    img.src = proxySrc;
+  });
+
+  _avPending.set(userId, p);
+  return p;
+}
+
+/* ═══════════════════════════════════════════════════════
+   AVATAR STYLE — gradient fallback
+   ═══════════════════════════════════════════════════════ */
+const GRADS = [
+  ['#f97316','#ef4444'],['#a855f7','#6366f1'],['#22c55e','#06b6d4'],
+  ['#eab308','#f97316'],['#f43f5e','#a855f7'],['#3b82f6','#06b6d4'],
+  ['#10b981','#22c55e'],['#f97316','#a855f7'],['#ec4899','#f43f5e'],
+  ['#8b5cf6','#ec4899'],
+];
+function avatarStyle(userId) {
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  const [a, b] = GRADS[h % GRADS.length];
+  const angle  = (h % 8) * 45;
+  return { grad: `linear-gradient(${angle}deg,${a},${b})`, color: a };
+}
+
+/* ═══════════════════════════════════════════════════════
+   PARTICLES / FX
+   ═══════════════════════════════════════════════════════ */
+const fx = document.getElementById('fx-layer');
+
+// cleanup particle timers to avoid leaks
+const _fxTimers = [];
+function _addFxEl(el, lifetimeMs) {
+  fx.appendChild(el);
+  const tid = setTimeout(() => el.remove(), lifetimeMs + 100);
+  _fxTimers.push(tid);
+  // prune completed timers periodically
+  if (_fxTimers.length > 60) _fxTimers.splice(0, 30);
+}
+
+function spawnEmoji(emoji, x, y) {
+  const el = document.createElement('div');
+  el.className = 'fx-emoji';
+  const dur  = 2.0 + Math.random() * 0.8;
+  const sz   = 16 + Math.random() * 14;
+  const rot  = (Math.random() - .5) * 50;
+  const ox   = (Math.random() - .5) * 60;
+  el.style.cssText = `left:${x + ox}px;top:${y}px;--dur:${dur}s;--sz:${sz}px;--rot:${rot}deg;`;
+  el.textContent = emoji;
+  _addFxEl(el, dur * 1000);
+}
+
+function spawnHearts(x, y, count = 5) {
+  const n = Math.min(count, 8);
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div');
+    el.className = 'fx-heart';
+    const dur    = 1.6 + Math.random() * 1.0;
+    const sz     = 16 + Math.random() * 18;
+    const delay  = Math.random() * 0.3;
+    /* bloom: spread in full 360° with varied distance */
+    const angle  = (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.8;
+    const dist   = 60 + Math.random() * 90;
+    const dist2  = dist * (1.4 + Math.random() * 0.6);
+    const tx     = Math.cos(angle) * dist;
+    const ty     = Math.sin(angle) * dist;
+    const tx2    = Math.cos(angle) * dist2;
+    const ty2    = Math.sin(angle) * dist2;
+    const r0     = (Math.random() - .5) * 30 + 'deg';
+    const r1     = (Math.random() - .5) * 20 + 'deg';
+    const r2     = (Math.random() - .5) * 40 + 'deg';
+    el.style.cssText = `left:${x}px;top:${y}px;--dur:${dur}s;--sz:${sz}px;` +
+      `--tx:${tx}px;--ty:${ty}px;--tx2:${tx2}px;--ty2:${ty2}px;` +
+      `--r0:${r0};--r1:${r1};--r2:${r2};animation-delay:${delay}s;`;
+    el.textContent = Math.random() > 0.25 ? '❤️' : (Math.random() > 0.5 ? '🩷' : '💕');
+    _addFxEl(el, (dur + delay) * 1000);
+  }
+}
+
+function spawnStars(x, y, count = 6) {
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement('div');
+    el.className = 'fx-star';
+    const dur  = 1.6 + Math.random() * 0.6;
+    const sz   = 14 + Math.random() * 12;
+    const angle = (i / count) * Math.PI * 2;
+    const dist  = 60 + Math.random() * 60;
+    const dist2 = dist * (1.5 + Math.random());
+    const tx   = Math.cos(angle) * dist   + 'px';
+    const ty   = Math.sin(angle) * dist   + 'px';
+    const tx2  = Math.cos(angle) * dist2  + 'px';
+    const ty2  = Math.sin(angle) * dist2  + 'px';
+    el.style.cssText = `left:${x}px;top:${y}px;--dur:${dur}s;--sz:${sz}px;--tx:${tx};--ty:${ty};--tx2:${tx2};--ty2:${ty2};`;
+    el.textContent = i % 3 === 0 ? '⭐' : (i % 3 === 1 ? '✨' : '💫');
+    _addFxEl(el, dur * 1000);
+  }
+}
+
+/* Position near the panel for effects */
+function panelCenter() {
+  const p = document.getElementById('chat-panel');
+  const r = p.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + 60 };
+}
+
+/* ═══════════════════════════════════════════════════════
+   EMOJI DETECTION — triggers particle burst
+   ═══════════════════════════════════════════════════════ */
+// Match actual emoji unicode characters in text
+const EMOJI_RE = /([\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F1FF}]|[\u{1F200}-\u{1F2FF}]|\u{2764}|\u{FE0F})/gu;
+
+function extractEmojis(text) {
+  return [...(text.matchAll(EMOJI_RE) || [])].map(m => m[0]);
+}
+
+/* Wrap emoji chars in text for pop animation */
+function wrapEmojiText(escaped) {
+  return escaped.replace(/([\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|\u{2764}|\u{FE0F})/gu,
+    m => `<span class="ep">${m}</span>`);
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ═══════════════════════════════════════════════════════
+   MESSAGE FADE — WeakRef, no leak
+   ═══════════════════════════════════════════════════════ */
+function scheduleFade(el) {
+  const ms = FADE_MS;
+  if (!ms) return;
+  const wr = new WeakRef(el);
+  const tid = setTimeout(() => {
+    const node = wr.deref();
+    if (node && node.isConnected) {
+      node.classList.add('out');
+      setTimeout(() => { if (node.isConnected) node.remove(); updateCount(); }, 380);
+    }
+  }, ms);
+  // store tid loosely for potential early cancel (not strictly needed for no-leak)
+}
+
+/* ═══════════════════════════════════════════════════════
+   TRIM — remove oldest rows beyond MAX_MSGS
+   ═══════════════════════════════════════════════════════ */
+function trimFeed() {
+  const feed = document.getElementById('chat-feed');
+  const rows = feed.children;
+  while (rows.length > MAX_MSGS) {
+    const old = rows[0];
+    old.classList.add('out');
+    const ref = new WeakRef(old);
+    setTimeout(() => { const n = ref.deref(); if (n && n.isConnected) n.remove(); }, 380);
+  }
+}
+
+/* Scroll feed to bottom so newest message is always visible */
+function scrollBottom() {
+  const feed = document.getElementById('chat-feed');
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateCount() {
+  _totalCount;
+  document.getElementById('hcnt').textContent = _totalCount + ' pesan';
+}
+
+/* ═══════════════════════════════════════════════════════
+   RENDER MESSAGE
+   ═══════════════════════════════════════════════════════ */
+async function renderMsg(data) {
+  const { type, user, user_id, avatar, text, is_mod, is_sub, detail } = data;
+  _totalCount++;
+  updateCount();
+
+  const uid  = user_id || user || 'x';
+  const feed = document.getElementById('chat-feed');
+  const pc   = panelCenter();
+
+  /* ── Event banners: gift / like / follow ── */
+  if (type === 'gift' || type === 'like' || type === 'follow') {
+    const row     = document.createElement('div');
+    const cls     = { gift:'ev-gift', like:'ev-like', follow:'ev-follow' }[type];
+    const icon    = { gift:'🎁', like:'❤️', follow:'👤' }[type];
+    const avStyle = avatarStyle(uid);
+
+    row.className = `ev-banner ${cls}`;
+    row.innerHTML = `
+      <div class="av" style="background:${avStyle.grad};flex-shrink:0;width:24px;height:24px;font-size:10px">
+        ${(user||'?')[0].toUpperCase()}
+      </div>
+      <div class="ev-body">
+        <div class="ev-name" style="color:${avStyle.color}">${esc(user)}</div>
+        <div class="ev-text">${icon} ${esc(detail||type)}</div>
+      </div>`;
+
+    feed.appendChild(row);
+    trimFeed();
+    scrollBottom();
+    scheduleFade(row);
+
+    // FX — like count from event detail, capped at 8
+    if (type === 'like') {
+      const likeCount = Math.min(parseInt(data.count) || 1, 8);
+      spawnHearts(pc.x, pc.y, likeCount);
+    }
+    if (type === 'follow') spawnStars(pc.x, pc.y, 8);
+    if (type === 'gift') {
+      spawnHearts(pc.x, pc.y, 3);
+      spawnStars(pc.x, pc.y, 5);
+    }
+
+    // Avatar async — tag element so onerror can evict right cache key
+    if (avatar) {
+      const avEl = row.querySelector('.av');
+      if (avEl) avEl._uid = uid;
+      loadAvatar(uid, avatar).then(src => {
+        if (!src || !row.isConnected) return;
+        const avEl2 = row.querySelector('.av');
+        if (!avEl2) return;
+        avEl2._uid = uid;
+        setAvatarImg(avEl2, src);
+      });
+    }
+    return;
+  }
+
+  /* ── Normal chat message ── */
+  const avStyle  = avatarStyle(uid);
+  const initial  = (user || '?')[0].toUpperCase();
+  const time     = new Date().toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit'});
+  const safeText = wrapEmojiText(esc(text || ''));
+  const emojis   = extractEmojis(text || '');
+
+  let badges = '';
+  if (is_mod) badges += '<span class="badge badge-mod">MOD</span>';
+  if (is_sub) badges += '<span class="badge badge-sub">SUB</span>';
+
+  const row = document.createElement('div');
+  row.className = 'msg';
+  row.style.setProperty('--msg-accent', avStyle.color);
+  row.innerHTML = `
+    <div class="av" style="background:${avStyle.grad}">
+      ${initial}
+    </div>
+    <div class="msg-body">
+      <div class="msg-meta">
+        <span class="msg-name" style="color:${avStyle.color}">${esc(user)}</span>
+        ${badges}
+        <span class="msg-time">${time}</span>
+      </div>
+      <div class="msg-text">${safeText}</div>
+    </div>`;
+
+  // Stagger emoji pop animations
+  row.querySelectorAll('.ep').forEach((el, i) => {
+    el.style.animationDelay = (i * 0.06) + 's';
+  });
+
+  feed.appendChild(row);
+  trimFeed();
+  scrollBottom();
+  scheduleFade(row);
+
+  // Spawn emoji particles
+  if (emojis.length) {
+    const unique = [...new Set(emojis)].slice(0, 4);
+    unique.forEach(em => spawnEmoji(em, pc.x, pc.y));
+  }
+
+  // Avatar: try cache first (instant), else async load
+  const avEl = row.querySelector('.av');
+  if (avEl) avEl._uid = uid;
+
+  const cachedSrc = _avCache.get(uid)?.src;
+  if (cachedSrc) {
+    setAvatarImg(avEl, cachedSrc);
+  } else if (avatar) {
+    loadAvatar(uid, avatar).then(src => {
+      if (!src || !row.isConnected) return;
+      const el = row.querySelector('.av');
+      if (!el) return;
+      el._uid = uid;
+      setAvatarImg(el, src);
+    });
+  }
+}
+
+/* ── Apply loaded image to avatar element ── */
+function setAvatarImg(avEl, src) {
+  if (!avEl || !src) return;
+  let img = avEl.querySelector('img');
+  if (!img) {
+    img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    avEl.appendChild(img);
+  }
+  // IMPORTANT: assign handlers BEFORE setting src to avoid race condition
+  // when the browser has the image cached and fires load synchronously
+  img.onload  = () => img.classList.add('loaded');
+  img.onerror = () => { img.remove(); _avCache.delete(img._uid); };
+  img._uid    = avEl._uid || '';
+  img.src     = src;
+}
+
+/* ═══════════════════════════════════════════════════════
+   CONFIG
+   ═══════════════════════════════════════════════════════ */
+let _cfg = {};
+function applyConfig(c) {
+  _cfg = c;
+  const root = document.documentElement;
+  root.style.setProperty('--accent', c.accent_color || '#f97316');
+  root.style.setProperty('--op', c.opacity_panels || 0.82);
+  if (c.chat_width) root.style.setProperty('--w', c.chat_width + 'px');
+  const panel = document.getElementById('chat-panel');
+  panel.classList.toggle('hidden',   c.show_chat === false);
+  panel.classList.toggle('pos-right', c.position_chat === 'right');
+}
+
+function setLive(on) {
+  document.getElementById('ldot').classList.toggle('off', !on);
+}
+
+/* ═══════════════════════════════════════════════════════
+   SSE
+   ═══════════════════════════════════════════════════════ */
+function connect() {
+  const es = new EventSource(`${API}/overlay/events`);
+  es.addEventListener('init',           e => { const d = JSON.parse(e.data); setLive(d.tiktok_connected); });
+  es.addEventListener('tiktok_status',  e => { setLive(JSON.parse(e.data).connected); });
+  es.addEventListener('tiktok_chat',    e => { renderMsg(JSON.parse(e.data)); });
+  es.addEventListener('overlay_config', e => { applyConfig(JSON.parse(e.data)); });
+  es.onerror = () => { es.close(); setTimeout(connect, 5000); };
+}
+
+async function init() {
+  try {
+    const r = await fetch(`${API}/overlay/config`);
+    if (r.ok) applyConfig(await r.json());
+  } catch(_) {}
+  connect();
+}
+
+init();
+</script>
+</body>
+</html>

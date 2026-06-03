@@ -1,5 +1,5 @@
 {
-  "tiktok_username": "@masukan-username-tiktok",
+  "tiktok_username": "@eisaisher",
   "commands": {
     "request": [
       "#req",
@@ -31,7 +31,7 @@
     "tiktok_warmup_seconds": 5
   },
   "tts": {
-    "enabled": true,
+    "enabled": false,
     "voice": "id-ID-ArdiNeural",
     "rate": "+0%",
     "volume": "+0%",
@@ -75,6 +75,7 @@
     "_obs_queue": "http://localhost:8000/obs/queue",
     "_obs_commands": "http://localhost:8000/obs/commands",
     "_obs_subtitle": "http://localhost:8000/obs/subtitle",
-    "_obs_requests": "http://localhost:8000/obs/requests"
+    "_obs_requests": "http://localhost:8000/obs/requests",
+    "_obs_chat": "http://localhost:8000/obs/chat"
   }
 }
