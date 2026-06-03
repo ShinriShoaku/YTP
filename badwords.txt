@@ -1,0 +1,25 @@
+# Filter Kata Kotor / Bad Word Filter
+# Satu kata per baris. Tidak case-sensitive.
+# Baris yang diawali # dianggap komentar dan diabaikan.
+#
+anjing
+bangsat
+bajingan
+brengsek
+kontol
+memek
+ngentot
+jancok
+asu
+babi
+goblok
+idiot
+bodoh
+sialan
+keparat
+bullshit
+shit
+fuck
+asshole
+bitch
+kemplang

@@ -86,6 +86,15 @@ if exist "player.html" (
     echo [WARN] player.html not found. Web UI will not be available.
 )
 
+REM Copy badwords.txt
+if exist "badwords.txt" (
+    copy "badwords.txt" "%DIST_DIR%\badwords.txt" >nul
+    echo   + badwords.txt
+) else (
+    echo [WARN] badwords not found. Web UI will not be available.
+)
+
+
 REM Copy config / queue stubs
 if not exist "%DIST_DIR%\config.json" (
     copy config.json "%DIST_DIR%\config.json" >nul
