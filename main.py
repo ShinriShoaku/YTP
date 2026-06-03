@@ -469,7 +469,7 @@ def _broadcast_player_state():
 
 try:
     from TikTokLive import TikTokLiveClient
-    from TikTokLive.events import ConnectEvent, CommentEvent, DisconnectEvent
+    from TikTokLive.events import ConnectEvent, CommentEvent, DisconnectEvent, GiftEvent, LikeEvent, FollowEvent
     TIKTOK_AVAILABLE = True
 except ImportError:
     TIKTOK_AVAILABLE = False
@@ -722,7 +722,7 @@ _tiktok_thread = None            # reference to listener thread
 _user_request_count: dict = {}
 
 
-def _process_tiktok_comment(user_id: str, nickname: str, comment: str):
+def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_url: str = ""):
     """
     Parse and handle a TikTok comment. Called from async thread executor.
     """
@@ -844,6 +844,16 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str):
     if _contains_badword(comment):
         print(f"[Filter] Komentar dari @{nickname} diblokir (mengandung kata terlarang): {comment[:40]}…")
         return  # blokir TTS dan overlay untuk komentar ini
+
+    # Broadcast ke OBS chat overlay
+    _broadcast("tiktok_chat", {
+        "user": nickname,
+        "user_id": user_id,
+        "avatar": avatar_url,
+        "text": comment,
+        "time": _now(),
+        "type": "chat",
+    })
 
     # Jalankan TTS di thread terpisah agar tidak blokir event loop TikTok
     threading.Thread(
@@ -969,17 +979,79 @@ def _start_tiktok_listener():
                     print(f"[TikTok] Disconnected from @{username}")
                     _broadcast("tiktok_status", {"connected": False, "username": username})
 
+                def _get_avatar(u):
+                    """
+                    Extract a plain URL string from TikTokLive user avatar.
+                    Handles: ImageModel (m_urls / url_list), plain string, None.
+                    """
+                    # Try known attribute names in order of preference
+                    av = (getattr(u, 'avatar_thumb', None) or
+                          getattr(u, 'avatar_medium', None) or
+                          getattr(u, 'avatar_larger', None) or
+                          getattr(u, 'profile_picture_url', None) or
+                          getattr(u, 'avatar_url', None) or "")
+
+                    # ImageModel (TikTokLive >= 5.x) has m_urls list
+                    if hasattr(av, 'm_urls') and av.m_urls:
+                        return str(av.m_urls[0])
+                    # Older versions used url_list
+                    if hasattr(av, 'url_list') and av.url_list:
+                        return str(av.url_list[0])
+                    # Plain string — only return if it looks like a URL
+                    s = str(av) if av else ""
+                    if s.startswith("http"):
+                        return s
+                    return ""
+
                 @client.on(CommentEvent)
                 async def on_comment(event: CommentEvent):
                     if time.time() < _tiktok_ready_at:
                         return
-                    uid  = str(event.user.unique_id)
-                    nick = event.user.nickname or uid
-                    text = event.comment or ""
-                    loop = asyncio.get_running_loop()
+                    uid    = str(event.user.unique_id)
+                    nick   = event.user.nickname or uid
+                    text   = event.comment or ""
+                    avatar = _get_avatar(event.user)
+                    loop   = asyncio.get_running_loop()
                     await loop.run_in_executor(
-                        None, _process_tiktok_comment, uid, nick, text
+                        None, _process_tiktok_comment, uid, nick, text, avatar
                     )
+
+                @client.on(GiftEvent)
+                async def on_gift(event: GiftEvent):
+                    try:
+                        nick   = event.user.nickname or str(event.user.unique_id)
+                        uid    = str(event.user.unique_id)
+                        avatar = _get_avatar(event.user)
+                        gname  = (getattr(event, 'gift_name', None)
+                                  or (getattr(event.gift, 'name', 'Gift') if hasattr(event, 'gift') else 'Gift'))
+                        gcount = getattr(event, 'repeat_count', 1) or 1
+                        _broadcast("tiktok_chat", {"type":"gift","user":nick,"user_id":uid,
+                            "avatar":avatar,"detail":f"mengirim {gname} x{gcount}","time":_now()})
+                    except Exception as e:
+                        print(f"[TikTok] Gift event error: {e}")
+
+                @client.on(LikeEvent)
+                async def on_like(event: LikeEvent):
+                    try:
+                        nick   = event.user.nickname or str(event.user.unique_id)
+                        uid    = str(event.user.unique_id)
+                        avatar = _get_avatar(event.user)
+                        count  = getattr(event, 'count', 1) or 1
+                        _broadcast("tiktok_chat", {"type":"like","user":nick,"user_id":uid,
+                            "avatar":avatar,"detail":f"mengirim {count} like","time":_now()})
+                    except Exception as e:
+                        print(f"[TikTok] Like event error: {e}")
+
+                @client.on(FollowEvent)
+                async def on_follow(event: FollowEvent):
+                    try:
+                        nick   = event.user.nickname or str(event.user.unique_id)
+                        uid    = str(event.user.unique_id)
+                        avatar = _get_avatar(event.user)
+                        _broadcast("tiktok_chat", {"type":"follow","user":nick,"user_id":uid,
+                            "avatar":avatar,"detail":"mengikuti akun","time":_now()})
+                    except Exception as e:
+                        print(f"[TikTok] Follow event error: {e}")
 
                 # Capture the asyncio loop so _stop_tiktok_listener can reach it
                 async def _capture_loop():
@@ -2054,6 +2126,12 @@ _DEFAULT_OVERLAY_CONFIG = {
     "show_tiktok_dot":     True,   # live dot indicator
     "show_subtitle":       True,   # subtitle/lyrics panel (auto-fetched from YouTube captions)
 
+    # ── Chat overlay ──────────────────────────────────────────
+    "show_chat":           True,   # TikTok Live chat overlay
+    "position_chat":       "left", # "left" | "right"
+    "chat_width":          340,    # pixel width of chat panel
+    "chat_fade_seconds":   18,     # seconds before chat message fades out (0 = never)
+
     # ── Limits ────────────────────────────────────────────────
     "max_queue_items":     6,      # how many queue rows to show
     "max_request_items":   8,      # how many request feed rows to show
@@ -2098,6 +2176,54 @@ def save_overlay_config(body: dict):
     _broadcast("overlay_config", merged)
     return {"message": "Config saved", "overlay": merged}
 
+
+
+# ─────────────────────────────────────────────────────────────
+#  Avatar Proxy  (bypass CORS for TikTok profile pictures)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/proxy/avatar", tags=["overlay"])
+async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
+    """
+    Fetch a remote image (e.g. TikTok avatar) server-side and return it.
+    Lets the OBS browser source load cross-origin images without CORS errors.
+    LRU-style in-memory cache: max 200 entries, evict oldest on overflow.
+    """
+    import hashlib, time as _t
+    from fastapi.responses import Response as FastAPIResponse
+
+    # ── Cache ──────────────────────────────────────────────────
+    cache = getattr(proxy_avatar, "_cache", None)
+    if cache is None:
+        proxy_avatar._cache = {}   # {url: (bytes, content_type, timestamp)}
+        cache = proxy_avatar._cache
+
+    if url in cache:
+        data, ct, _ = cache[url]
+        return FastAPIResponse(content=data, media_type=ct,
+                               headers={"Cache-Control":"public,max-age=3600",
+                                        "Access-Control-Allow-Origin":"*"})
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; OBSOverlay/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = resp.read()
+            ct   = resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+    except Exception as e:
+        raise HTTPException(502, detail=f"Could not fetch avatar: {e}")
+
+    # Evict oldest if cache > 200 entries
+    if len(cache) >= 200:
+        oldest = min(cache, key=lambda k: cache[k][2])
+        del cache[oldest]
+
+    cache[url] = (data, ct, _t.time())
+    return FastAPIResponse(content=data, media_type=ct,
+                           headers={"Cache-Control":"public,max-age=3600",
+                                    "Access-Control-Allow-Origin":"*"})
 
 # ─────────────────────────────────────────────────────────────
 #  OBS Overlay HTML
@@ -2144,6 +2270,11 @@ def obs_requests():
     """Modular: TikTok request feed only."""
     return _serve_html("obs_requests.html")
 
+@app.get("/obs/chat", response_class=HTMLResponse, tags=["overlay"])
+def obs_chat():
+    """Modular: TikTok Live chat overlay."""
+    return _serve_html("obs_chat.html")
+
 
 # (startup logic moved to lifespan handler at top of file)
 
@@ -2168,6 +2299,7 @@ if __name__ == "__main__":
     print(f"  Web UI    : http://localhost:{port}/player")
     print(f"  API docs  : http://localhost:{port}/docs")
     print(f"  OBS (all) : http://localhost:{port}/obs")
+    print(f"  OBS Chat  : http://localhost:{port}/obs/chat")
     print("=" * 56)
 
     # Auto-open browser after server is ready
