@@ -31,7 +31,7 @@
     "tiktok_warmup_seconds": 5
   },
   "tts": {
-    "enabled": true,
+    "enabled": false,
     "voice": "id-ID-ArdiNeural",
     "rate": "+0%",
     "volume": "+0%",

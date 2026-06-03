@@ -4,7 +4,7 @@ REM Usage:  Double-click or run from Developer Command Prompt
 setlocal enabledelayedexpansion
 
 REM === 🛠️ SET VERSI APLIKASI DI SINI ===
-set APP_VERSION=v4.0.0
+set APP_VERSION=v4.1.0
 set DIST_NAME=YTPlayer-%APP_VERSION%
 set DIST_DIR=dist\%DIST_NAME%
 
@@ -71,7 +71,7 @@ echo %APP_VERSION% > "%DIST_DIR%\version.txt"
 echo   + version.txt (%APP_VERSION%)
 
 REM Copy overlay HTML files
-for %%f in (obs_overlay.html obs_nowplaying.html obs_queue.html obs_commands.html obs_subtitle.html obs_requests.html) do (
+for %%f in (obs_overlay.html obs_chat.html obs_nowplaying.html obs_queue.html obs_commands.html obs_subtitle.html obs_requests.html) do (
     if exist "%%f" (
         copy "%%f" "%DIST_DIR%\overlays\%%f" >nul
         echo   + overlays\%%f
