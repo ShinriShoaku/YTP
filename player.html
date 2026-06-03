@@ -106,6 +106,7 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
     <div class="tab active" onclick="switchTab('player')">▶ Player</div>
     <div class="tab" onclick="switchTab('settings')">⚙ Settings</div>
     <div class="tab" onclick="switchTab('filter')">🚫 Filter</div>
+    <div class="tab" onclick="switchTab('tiktokstudio')">🎬 TikTok Studio</div>
   </div>
 
   <!-- ══════════════ PLAYER TAB ══════════════ -->
@@ -368,6 +369,97 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
 
   </div><!-- /filter -->
 
+  <!-- ══════════════ TIKTOK STUDIO TAB ══════════════ -->
+  <div id="tab-tiktokstudio" class="tab-panel">
+
+    <!-- Info Banner -->
+    <div class="cfg-section" style="border-color:#f59e0b44;background:#1c1a10">
+      <div class="cfg-section-title" style="color:#f59e0b">⚠ Kenapa perlu ini?</div>
+      <p style="font-size:12px;color:#9ca3af;line-height:1.7">
+        TikTok LIVE Studio <b style="color:#fbbf24">memblokir</b> Browser Source dengan URL <code style="background:#111827;padding:1px 5px;border-radius:3px">localhost</code> atau <code style="background:#111827;padding:1px 5px;border-radius:3px">127.0.0.1</code>.<br>
+        Solusi: tambahkan alias hostname <b style="color:#f97316">kanaeplayerlive.id</b> → <code style="background:#111827;padding:1px 5px;border-radius:3px">127.0.0.1</code> di file <b>hosts Windows</b>, lalu gunakan URL berbasis hostname itu di Browser Source TikTok Studio.
+      </p>
+      <div style="margin-top:10px;padding:8px 12px;background:#111827;border-radius:6px;border:1px solid #374151;font-size:11px;color:#6b7280">
+        📁 File hosts: <code style="color:#e5e7eb">C:\Windows\System32\drivers\etc\hosts</code><br>
+        🔑 Butuh <b style="color:#f59e0b">hak Administrator</b> — script PowerShell di bawah harus dijalankan sebagai Admin.
+      </div>
+    </div>
+
+    <!-- Current Hosts Status -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🔍 Status Hosts File</div>
+      <div id="tsHostStatus" style="padding:10px 12px;background:#111827;border-radius:6px;border:1px solid #374151;font-size:12px;color:#9ca3af;margin-bottom:12px;min-height:40px">
+        Klik tombol di bawah untuk cek status…
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="tsCheckStatus()">🔍 Cek Status Sekarang</button>
+    </div>
+
+    <!-- Set Hostname -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">✅ Set Hostname (Tambah ke Hosts)</div>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:12px;line-height:1.6">
+        Tambahkan baris <code style="background:#111827;padding:1px 5px;border-radius:3px">127.0.0.1  kanaeplayerlive.id</code> ke hosts file Windows.
+      </p>
+      <ol style="font-size:12px;color:#d1d5db;line-height:2;padding-left:18px;margin-bottom:12px">
+        <li>Buka folder yang sama dengan <code style="background:#111827;padding:1px 5px;border-radius:3px">YTPlayer.exe</code></li>
+        <li><b style="color:#fbbf24">Double-click</b> file <code style="background:#111827;padding:1px 5px;border-radius:3px">setup-hosts.bat</code></li>
+        <li>Klik <b style="color:#fbbf24">Yes</b> saat muncul popup UAC (minta izin Admin)</li>
+        <li>Tunggu muncul pesan <b style="color:#22c55e">Berhasil ditambahkan!</b> lalu tekan Enter untuk tutup</li>
+      </ol>
+      <div style="background:#111827;border:1px solid #374151;border-radius:6px;padding:10px 12px;font-size:11px;color:#6b7280">
+        💡 File <code>setup-hosts.bat</code> dan <code>setup-hosts.ps1</code> harus berada dalam <b>folder yang sama</b>. Script otomatis membuat backup hosts sebelum mengedit.
+      </div>
+    </div>
+
+    <!-- Restore / Remove Hostname -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🔄 Restore Hostname (Hapus dari Hosts)</div>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:12px;line-height:1.6">
+        Kembalikan hosts file ke kondisi semula (menghapus entry <code style="background:#111827;padding:1px 5px;border-radius:3px">kanaeplayerlive.id</code>) dari backup yang dibuat saat setup.
+      </p>
+      <ol style="font-size:12px;color:#d1d5db;line-height:2;padding-left:18px;margin-bottom:12px">
+        <li>Buka folder yang sama dengan <code style="background:#111827;padding:1px 5px;border-radius:3px">YTPlayer.exe</code></li>
+        <li><b style="color:#fbbf24">Double-click</b> file <code style="background:#111827;padding:1px 5px;border-radius:3px">restore-hosts.bat</code></li>
+        <li>Klik <b style="color:#fbbf24">Yes</b> saat muncul popup UAC (minta izin Admin)</li>
+        <li>Tunggu muncul pesan <b style="color:#22c55e">Berhasil di-restore dari backup!</b> lalu tekan Enter untuk tutup</li>
+      </ol>
+      <div style="background:#111827;border:1px solid #374151;border-radius:6px;padding:10px 12px;font-size:11px;color:#6b7280">
+        💡 File <code>restore-hosts.bat</code> dan <code>restore-hosts.ps1</code> harus berada dalam <b>folder yang sama</b>. Setelah restore, file backup <code>hosts.bak</code> otomatis dihapus.
+      </div>
+    </div>
+
+    <!-- OBS Browser Source Links (custom hostname) -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">🔗 URL Browser Source — TikTok Studio</div>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:4px">
+        Gunakan URL <b style="color:#f97316">kanaeplayerlive.id</b> berikut sebagai Browser Source di TikTok LIVE Studio (setelah hostname di-set).
+      </p>
+      <div id="tsPortRow" style="display:flex;align-items:center;gap:10px;margin:10px 0 14px">
+        <span style="font-size:12px;color:#9ca3af;white-space:nowrap">Port server:</span>
+        <input id="tsPort" type="number" value="8000" min="1" max="65535"
+          style="width:90px;padding:5px 8px;border-radius:5px;border:1px solid #374151;background:#111827;color:#e5e7eb;font-size:13px;outline:none"
+          oninput="tsRenderLinks()">
+      </div>
+      <div id="tsObsLinks" class="obs-links"></div>
+      <div style="margin-top:12px;padding:8px 12px;background:#111827;border-radius:6px;border:1px solid #374151;font-size:11px;color:#6b7280">
+        💡 Tips: Buka salah satu link dulu di browser untuk memastikan overlay muncul, baru copy URL-nya ke Browser Source TikTok Studio.
+      </div>
+    </div>
+
+    <!-- Manual Check Guide -->
+    <div class="cfg-section">
+      <div class="cfg-section-title">📖 Cara Cek Manual (di PowerShell biasa)</div>
+      <div style="position:relative">
+        <textarea id="tsScriptCheck" rows="3" readonly
+          style="width:100%;background:#0d1117;color:#93c5fd;border:1px solid #30363d;border-radius:6px;padding:12px;font-size:12px;font-family:'Consolas','Courier New',monospace;resize:none;outline:none">Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" | Select-String "kanaeplayerlive"
+# Jika ada output → hostname sudah aktif. Jika kosong → belum di-set.</textarea>
+        <button onclick="tsCopy('tsScriptCheck','btnCopyCheck')" id="btnCopyCheck"
+          style="position:absolute;top:8px;right:8px;background:#374151;border:1px solid #4b5563;color:#e5e7eb;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer">📋 Copy</button>
+      </div>
+    </div>
+
+  </div><!-- /tiktokstudio -->
+
 </div><!-- /app -->
 
 <script>
@@ -376,7 +468,7 @@ let queueData=[], shuffleOn=false, lastServerRunning=false;
 
 // ── Tab switching ──────────────────────────────────────────────
 function switchTab(name){
-  const panels=['player','settings','filter'];
+  const panels=['player','settings','filter','tiktokstudio'];
   document.querySelectorAll('.tab').forEach((t,i)=>{
     t.classList.toggle('active', panels[i]===name);
   });
@@ -385,6 +477,7 @@ function switchTab(name){
   });
   if(name==='settings') loadSettings();
   if(name==='filter') loadFilterWords();
+  if(name==='tiktokstudio'){ tsRenderLinks(); tsCheckStatus(); }
 }
 
 // ── Tag input helpers ──────────────────────────────────────────
@@ -876,6 +969,92 @@ syncColor('cfg-ov_accent_color2','cfg-ov_accent_color2_text');
 
 syncPlayerState();
 setInterval(syncPlayerState,3000);
+
+// ── TikTok Studio — Hosts Helper ──────────────────────────────
+const TS_HOSTNAME = 'kanaeplayerlive.id';
+const TS_OBS_PATHS = [
+  { label: '🖥 Semua (combined)', path: '/obs' },
+  { label: '▶ Now Playing',       path: '/obs/nowplaying' },
+  { label: '📋 Queue',            path: '/obs/queue' },
+  { label: '💬 Commands',         path: '/obs/commands' },
+  { label: '📝 Subtitle',         path: '/obs/subtitle' },
+  { label: '🎤 Requests',         path: '/obs/requests' },
+];
+
+function tsGetPort(){
+  return parseInt(document.getElementById('tsPort')?.value)||8000;
+}
+
+function tsRenderLinks(){
+  const port = tsGetPort();
+  const el = document.getElementById('tsObsLinks');
+  if(!el) return;
+  el.innerHTML = TS_OBS_PATHS.map(o => {
+    const url = `http://${TS_HOSTNAME}:${port}${o.path}`;
+    return `<a class="obs-link" href="${url}" target="_blank" title="${url}">${o.label}</a>`;
+  }).join('');
+}
+
+function tsCopy(textareaId, btnId){
+  const ta = document.getElementById(textareaId);
+  if(!ta) return;
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    const btn = document.getElementById(btnId);
+    if(btn){ const orig=btn.textContent; btn.textContent='✓ Copied!'; setTimeout(()=>btn.textContent=orig, 1800); }
+  }).catch(()=>{
+    ta.select(); document.execCommand('copy');
+  });
+}
+
+async function tsCheckStatus(){
+  const el = document.getElementById('tsHostStatus');
+  if(!el) return;
+  el.innerHTML = '<span style="color:#9ca3af">⏳ Mencoba deteksi…</span>';
+  // Try fetching from the custom hostname — if it resolves, hosts is set
+  try{
+    const ctrl = new AbortController();
+    const tid = setTimeout(()=>ctrl.abort(), 3000);
+    const port = tsGetPort();
+    const res = await fetch(`http://${TS_HOSTNAME}:${port}/player/state`, { signal: ctrl.signal });
+    clearTimeout(tid);
+    if(res.ok){
+      el.innerHTML = `<span style="color:#22c55e;font-weight:600">✅ Hostname aktif!</span> &nbsp;<code style="background:#111827;padding:1px 6px;border-radius:4px;font-size:11px">${TS_HOSTNAME}</code> berhasil di-resolve ke server lokal. Browser Source TikTok Studio siap digunakan.`;
+    } else {
+      el.innerHTML = `<span style="color:#f59e0b;font-weight:600">⚠ Hostname ter-resolve</span> tapi server merespons kode <b>${res.status}</b>. Pastikan server sudah jalan.`;
+    }
+  } catch(e){
+    if(e.name==='AbortError'){
+      el.innerHTML = `<span style="color:#ef4444;font-weight:600">❌ Hostname belum aktif</span> — <code style="background:#111827;padding:1px 6px;border-radius:4px;font-size:11px">${TS_HOSTNAME}</code> tidak bisa di-resolve. Jalankan script <b>Set Hostname</b> di atas sebagai Administrator, lalu cek ulang.`;
+    } else {
+      el.innerHTML = `<span style="color:#ef4444;font-weight:600">❌ Tidak bisa konek</span> ke <code style="background:#111827;padding:1px 6px;border-radius:4px;font-size:11px">${TS_HOSTNAME}:${tsGetPort()}</code>. Hostname mungkin belum di-set atau server belum jalan.`;
+    }
+  }
+}
+
+function tsRunScript(mode){
+  const scriptId = mode === 'add' ? 'tsScriptAdd' : 'tsScriptRemove';
+  const toastId  = mode === 'add' ? 'tsToastAdd'  : 'tsToastRemove';
+  const ta = document.getElementById(scriptId);
+  if(!ta) return;
+  // Copy script to clipboard first
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    document.getElementById(toastId).textContent = '📋 Script di-copy! Sekarang paste & jalankan di PowerShell Administrator yang terbuka.';
+  }).catch(()=>{ ta.select(); document.execCommand('copy'); });
+  // Try to open a PowerShell run dialog hint — browsers can't directly run executables,
+  // so we guide the user with a clear instruction overlay
+  const msg = mode === 'add'
+    ? '1. Tekan Win+X → pilih "Windows PowerShell (Admin)" atau "Terminal (Admin)"\n2. Paste script (Ctrl+V) dan tekan Enter\n3. Kembali ke tab ini, klik "Cek Status Sekarang"'
+    : '1. Tekan Win+X → pilih "Windows PowerShell (Admin)" atau "Terminal (Admin)"\n2. Paste script (Ctrl+V) dan tekan Enter\n3. Kembali ke tab ini, klik "Cek Status Sekarang"';
+  // Show a non-blocking instruction toast
+  showNotif('📋 Script di-copy! Buka PowerShell Admin → Paste → Enter', true, 7000);
+  document.getElementById(toastId).innerHTML =
+    `<span style="color:#fbbf24">ℹ️</span> Script sudah di-copy ke clipboard.<br>
+    Buka <b>PowerShell sebagai Administrator</b> (Win+X → Terminal Admin), lalu <b>Ctrl+V → Enter</b>.`;
+}
+
+// Init TikTok Studio links on load (in case someone lands on this tab via direct #hash)
+tsRenderLinks();
+
 </script>
 </body>
 </html>

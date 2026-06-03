@@ -4,7 +4,7 @@ REM Usage:  Double-click or run from Developer Command Prompt
 setlocal enabledelayedexpansion
 
 REM === 🛠️ SET VERSI APLIKASI DI SINI ===
-set APP_VERSION=v3.1.0-tester
+set APP_VERSION=v4.0.0
 set DIST_NAME=YTPlayer-%APP_VERSION%
 set DIST_DIR=dist\%DIST_NAME%
 
@@ -94,7 +94,6 @@ if exist "badwords.txt" (
     echo [WARN] badwords not found. Web UI will not be available.
 )
 
-
 REM Copy config / queue stubs
 if not exist "%DIST_DIR%\config.json" (
     copy config.json "%DIST_DIR%\config.json" >nul
@@ -122,7 +121,19 @@ if exist "mpv\mpv.exe" (
     echo        and place mpv.exe in: %DIST_DIR%\mpv\mpv.exe
 )
 
-REM ── 7. Auto-Packaging (ZIP, siap upload ke GitHub Release) ───
+REM ── 7. Copy hosts scripts ────────────────────────────────────
+echo.
+echo [INFO] Copying hosts scripts...
+for %%f in (setup-hosts.bat setup-hosts.ps1 restore-hosts.bat restore-hosts.ps1) do (
+    if exist "%%f" (
+        copy "%%f" "%DIST_DIR%\%%f" >nul
+        echo   + %%f
+    ) else (
+        echo [WARN] %%f not found, skipping.
+    )
+)
+
+REM ── 8. Auto-Packaging (ZIP, siap upload ke GitHub Release) ───
 echo.
 echo [INFO] Compressing build into zip...
 powershell -NoProfile -Command ^
