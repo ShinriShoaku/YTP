@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>OBS – Commands CYBER</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --c-green:#00ff9d; --c-cyan:#00e5ff; --c-yellow:#ffe600;
+  --c-red:#ff2b4e; --c-bg:rgba(2,8,12,0.93);
+  --c-border:rgba(0,255,157,0.28);
+}
+html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
+  font-family:'Share Tech Mono',monospace;color:var(--c-green);}
+
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:99999;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,0.12) 0px,rgba(0,0,0,0.12) 1px,transparent 1px,transparent 3px);}
+
+#cmd-panel{
+  position:fixed;top:20px;left:20px;width:240px;
+  transition:left .3s,right .3s;
+}
+#cmd-panel.pos-right{left:auto;right:20px;}
+#cmd-panel.hidden{display:none;}
+
+.panel-card{
+  background:var(--c-bg);border:1px solid var(--c-border);
+  position:relative;overflow:hidden;
+  box-shadow:0 0 30px rgba(0,255,157,0.08),inset 0 0 40px rgba(0,255,157,0.02);
+}
+.panel-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--c-green),var(--c-cyan),transparent);
+  background-size:200% 100%;animation:borderFlow 3s linear infinite;
+}
+@keyframes borderFlow{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* left accent */
+.panel-card .left-bar{
+  position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,var(--c-green),var(--c-cyan),transparent);
+  box-shadow:0 0 8px var(--c-green);
+}
+
+.panel-header{
+  display:flex;align-items:center;gap:8px;padding:10px 14px 10px 18px;
+  border-bottom:1px solid rgba(0,255,157,0.1);
+  font-family:'Orbitron',monospace;font-size:9px;font-weight:700;
+  letter-spacing:3px;text-transform:uppercase;color:var(--c-cyan);
+}
+
+#cmd-rows{padding:10px 14px 8px 18px;}
+
+/* Each command row */
+.cmd-row{display:flex;gap:8px;align-items:center;margin-bottom:6px;}
+.cmd-tag{
+  font-family:'Orbitron',monospace;
+  font-size:10px;font-weight:700;
+  color:var(--c-green);
+  background:rgba(0,255,157,0.07);
+  border:1px solid rgba(0,255,157,0.3);
+  padding:2px 7px;
+  letter-spacing:1px;
+  text-shadow:0 0 8px rgba(0,255,157,0.5);
+  white-space:nowrap;
+}
+.cmd-desc{font-size:10px;color:rgba(0,229,255,0.65);letter-spacing:0.5px;}
+.cmd-divider{height:1px;background:rgba(0,255,157,0.08);margin:6px 0;}
+
+/* footer TikTok */
+#cmd-footer{padding:6px 14px 10px 18px;}
+#tiktok-status{display:flex;align-items:center;gap:7px;font-size:9px;color:rgba(0,255,157,0.5);letter-spacing:1.5px;}
+#tiktok-dot2{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--c-red);border:1px solid rgba(255,43,78,0.5);
+  flex-shrink:0;transition:background .3s;
+}
+#tiktok-dot2.online{
+  background:var(--c-green);border-color:var(--c-green);
+  box-shadow:0 0 6px var(--c-green);
+  animation:blink 1.5s infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* boot sequence animation */
+@keyframes bootLine{
+  from{opacity:0;transform:translateX(-8px);}
+  to{opacity:1;transform:translateX(0);}
+}
+.cmd-row:nth-child(1){animation:bootLine .3s .05s both;}
+.cmd-row:nth-child(2){animation:bootLine .3s .15s both;}
+.cmd-row:nth-child(3){animation:bootLine .3s .25s both;}
+</style>
+</head>
+<body>
+<div id="cmd-panel">
+  <div class="panel-card">
+    <div class="left-bar"></div>
+    <div class="panel-header">◈ CMD LIST</div>
+    <div id="cmd-rows"></div>
+    <div class="cmd-divider"></div>
+    <div id="cmd-footer">
+      <div id="tiktok-status">
+        <div id="tiktok-dot2"></div>
+        <span id="tiktok-label">TIKTOK_OFFLINE</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const API='http://localhost:8000';
+let cfg={};
+let tiktokConnected=false;
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function applyConfig(c){
+  cfg=c;
+  document.documentElement.style.setProperty('--c-green',c.accent_color||'#00ff9d');
+  document.documentElement.style.setProperty('--c-cyan',c.accent_color2||'#00e5ff');
+  const cp=document.getElementById('cmd-panel');
+  if(c.position_commands==='hidden'){cp.classList.add('hidden');return;}
+  cp.classList.remove('hidden');
+  cp.classList.toggle('pos-right',c.position_commands==='right');
+}
+
+function renderCommands(cmds){
+  const rows=document.getElementById('cmd-rows');
+  const entries=[
+    {key:'request',label:'Request lagu',icon:'♪'},
+    {key:'skip',label:'Vote skip',icon:'▶▶'},
+    {key:'queue',label:'Lihat antrian',icon:'≡'},
+  ];
+  rows.innerHTML=entries.map(e=>{
+    const list=cmds[e.key]||[];
+    if(!list.length)return'';
+    return`<div class="cmd-row"><span class="cmd-tag">${esc(list[0])}</span><span class="cmd-desc">${e.icon} ${esc(e.label)}</span></div>`;
+  }).join('');
+}
+
+function updateTikTok(connected){
+  tiktokConnected=connected;
+  const dot=document.getElementById('tiktok-dot2');
+  const lbl=document.getElementById('tiktok-label');
+  dot.className=connected?'online':'';
+  lbl.textContent=connected?'TIKTOK_CONNECTED':'TIKTOK_OFFLINE';
+}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('init',e=>{const d=JSON.parse(e.data);if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);});
+  es.addEventListener('tiktok_status',e=>{updateTikTok(JSON.parse(e.data).connected);});
+  es.addEventListener('overlay_config',e=>{applyConfig(JSON.parse(e.data));});
+  es.onerror=()=>{es.close();setTimeout(connectSSE,5000);};
+}
+async function init(){
+  try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(_){}
+  try{const r=await fetch(`${API}/overlay/state`);if(r.ok){const d=await r.json();if(d.commands)renderCommands(d.commands);updateTikTok(!!d.tiktok_connected);}}catch(_){}
+  connectSSE();
+}
+init();
+</script>
+</body>
+</html>

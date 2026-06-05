@@ -64,23 +64,8 @@ async def lifespan(application: FastAPI):
 
     # TikTok is NOT started automatically – connect manually via the Web UI Settings tab.
     print("[TikTok] Auto-connect disabled. Use the Web UI Settings tab to connect manually.")
-    # FIX: Start periodic cleanup task
-    async def _periodic_cleanup():
-        while True:
-            await asyncio.sleep(60)  # Every 60 seconds
-            _cleanup_subtitle_threads()
-            import gc
-            gc.collect()
-
-    cleanup_task = asyncio.create_task(_periodic_cleanup())
-
     yield
-    # ── shutdown ──────────────────────────────
-    cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    # ── shutdown (nothing needed) ──────────────────────────────
 
 
 app = FastAPI(
@@ -103,14 +88,25 @@ app.add_middleware(
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
+_config_mtime: float = 0.0
+_config_cache: dict = {}
+
 def _load_config() -> dict:
+    """Load config.json. Cached; reloads only when file changes on disk."""
+    global _config_cache, _config_mtime
     if not os.path.exists(CONFIG_FILE):
         return {}
     try:
+        mtime = os.path.getmtime(CONFIG_FILE)
+        if mtime == _config_mtime and _config_mtime > 0:
+            return _config_cache
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _config_cache = data
+        _config_mtime = mtime
+        return data
     except Exception:
-        return {}
+        return _config_cache
 
 _config = _load_config()
 
@@ -142,29 +138,43 @@ def _get_settings() -> dict:
 
 BADWORDS_FILE = os.path.join(BASE_DIR, "badwords.txt")
 
+_badwords_cache: list = []
+_badwords_mtime: float = 0.0
+
 def _load_badwords() -> list:
-    """Load bad words list from badwords.txt. Returns list of lowercase strings."""
+    """Load bad words list from badwords.txt. Cached in memory; reloads only if file changes."""
+    global _badwords_cache, _badwords_mtime
     if not os.path.exists(BADWORDS_FILE):
+        _badwords_cache = []
         return []
     try:
+        mtime = os.path.getmtime(BADWORDS_FILE)
+        if mtime == _badwords_mtime and _badwords_mtime > 0:
+            return _badwords_cache  # no change – return cached list
         with open(BADWORDS_FILE, "r", encoding="utf-8") as f:
             words = []
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     words.append(line.lower())
-            return words
+        _badwords_cache = words
+        _badwords_mtime = mtime
+        return words
     except Exception:
-        return []
+        return _badwords_cache
 
 def _save_badwords(words: list):
-    """Save bad words list to badwords.txt."""
+    """Save bad words list to badwords.txt and invalidate in-memory cache."""
+    global _badwords_cache, _badwords_mtime
     with open(BADWORDS_FILE, "w", encoding="utf-8") as f:
         f.write("# Filter Kata Kotor / Bad Word Filter\n")
         f.write("# Satu kata per baris. Tidak case-sensitive.\n")
         f.write("# Baris yang diawali # dianggap komentar dan diabaikan.\n#\n")
         for w in words:
             f.write(w.strip().lower() + "\n")
+    # Invalidate cache so next read picks up the new file
+    _badwords_cache = list(words)
+    _badwords_mtime = os.path.getmtime(BADWORDS_FILE) if os.path.exists(BADWORDS_FILE) else 0.0
 
 def _contains_badword(text: str) -> bool:
     """
@@ -231,25 +241,42 @@ skip_votes: set = set()   # set of user IDs who voted skip
 _recent_requests: list = []  # last 20 TikTok requests for overlay
 _subtitle_song_id: Optional[str] = None   # tracks which song subtitle thread is for
 
+_queue_cache: list = []
+_queue_mtime: float = 0.0
+
 def _load_queue() -> List[dict]:
+    """Load queue from disk. Cached in memory; reloads only when file changes."""
+    global _queue_cache, _queue_mtime
     if not os.path.exists(QUEUE_FILE):
+        _queue_cache = []
         return []
     try:
+        mtime = os.path.getmtime(QUEUE_FILE)
+        if mtime == _queue_mtime and _queue_mtime > 0:
+            return list(_queue_cache)  # return a copy to avoid external mutation
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _queue_cache = data
+        _queue_mtime = mtime
+        return list(data)
     except Exception:
-        return []
+        return list(_queue_cache)
 
 def _save_queue(q: List[dict]):
+    global _queue_cache, _queue_mtime
     with open(QUEUE_FILE, "w", encoding="utf-8") as f:
         json.dump(q, f, indent=2, ensure_ascii=False)
+    # Update cache immediately so subsequent reads don't re-read the file
+    _queue_cache = list(q)
+    _queue_mtime = os.path.getmtime(QUEUE_FILE) if os.path.exists(QUEUE_FILE) else 0.0
 
 def _queue_snapshot():
     q = _load_queue()
     return [{"position": i, "song": s} for i, s in enumerate(q)]
 
 def _queue_len() -> int:
-    return len(_load_queue())
+    """Return queue length from in-memory cache – no disk read needed."""
+    return len(_queue_cache)
 
 def _add_recent_request(entry: dict):
     """Keep last 20 TikTok requests for the overlay."""
@@ -299,12 +326,50 @@ _server_player: Optional[str] = None
 _player_killed: bool = False
 
 # IPC paths differ by OS
+# Music mpv uses one socket, TTS mpv uses a DIFFERENT socket to avoid clashing
 if IS_WINDOWS:
-    MPV_SOCKET     = r'\\.\pipe\ytapi-mpv'
-    MPV_SOCKET_ARG = r'//./pipe/ytapi-mpv'
+    # On Windows, mpv --input-ipc-server expects ONLY the bare pipe name (no path prefix).
+    # mpv will create \\.\pipe\<name> automatically.
+    MPV_SOCKET_ARG     = 'ytapi-mpv'
+    MPV_TTS_SOCKET_ARG = 'ytapi-mpv-tts'
+    # Full UNC path used by Python open() to connect: \\\\.\\pipe\\<name>
+    MPV_SOCKET         = '\\\\.\\pipe\\ytapi-mpv'
+    MPV_TTS_SOCKET     = '\\\\.\\pipe\\ytapi-mpv-tts'
 else:
-    MPV_SOCKET     = "/tmp/ytapi-mpv.sock"
-    MPV_SOCKET_ARG = MPV_SOCKET
+    MPV_SOCKET         = "/tmp/ytapi-mpv.sock"
+    MPV_SOCKET_ARG     = MPV_SOCKET
+    MPV_TTS_SOCKET     = "/tmp/ytapi-mpv-tts.sock"
+    MPV_TTS_SOCKET_ARG = MPV_TTS_SOCKET
+
+
+def _get_music_volume() -> int:
+    """Return current music volume (0-150). Prefers in-memory global over disk."""
+    global _music_volume
+    try:
+        if _music_volume is not None:
+            return _music_volume
+    except NameError:
+        pass
+    cfg = _load_config()
+    raw = cfg.get("settings", {}).get("music_volume")
+    if raw is None:
+        raw = cfg.get("music", {}).get("volume", 100)
+    try:
+        return max(0, min(150, int(raw)))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _tts_volume_to_mpv(edge_volume: str) -> int:
+    """
+    Convert edge-tts volume string (e.g. '+20%', '-10%', '+0%') to mpv 0-100 int.
+    edge-tts default is +0% = 100% = mpv 100.
+    """
+    try:
+        val = int(str(edge_volume).replace('%', '').replace('+', '').strip())
+        return max(0, min(130, 100 + val))
+    except (TypeError, ValueError):
+        return 100
 
 
 def _mpv_send_unix(command: list, timeout: float = 2.0) -> Optional[dict]:
@@ -329,31 +394,50 @@ def _mpv_send_unix(command: list, timeout: float = 2.0) -> Optional[dict]:
 
 
 def _mpv_send_windows(command: list, timeout: float = 2.0) -> Optional[dict]:
-    """Send command to mpv via Windows named pipe with thread timeout."""
+    """
+    Send JSON IPC command to mpv via Windows named pipe.
+    MPV_SOCKET = '\\.\\pipe\\ytapi-mpv' (full UNC path for Python open).
+    Retries up to 2s to handle the brief startup window after mpv launches.
+    """
+    if _mpv_proc is None or _mpv_proc.poll() is not None:
+        return None
+
     result: list = [None]
 
     def _do():
-        try:
-            with open(MPV_SOCKET, 'r+b', buffering=0) as f:
-                msg = json.dumps({"command": command}).encode() + b'\n'
-                f.write(msg)
-                resp = f.read(4096)
-                if resp:
-                    # mpv may send multiple lines; grab first valid JSON
-                    for line in resp.decode('utf-8', errors='ignore').splitlines():
-                        line = line.strip()
-                        if line:
-                            try:
-                                result[0] = json.loads(line)
-                                break
-                            except Exception:
-                                pass
-        except Exception as e:
-            print(f"[MPV IPC Windows] {e}")
+        deadline = time.time() + 2.0
+        last_err = None
+        while time.time() < deadline:
+            try:
+                with open(MPV_SOCKET, 'r+b', buffering=0) as f:
+                    msg = json.dumps({"command": command}).encode() + b'\n'
+                    f.write(msg)
+                    resp = f.read(4096)
+                    if resp:
+                        for line in resp.decode('utf-8', errors='ignore').splitlines():
+                            line = line.strip()
+                            if line:
+                                try:
+                                    result[0] = json.loads(line)
+                                    return
+                                except Exception:
+                                    pass
+                    return  # sent OK even if no parseable response
+            except FileNotFoundError:
+                last_err = "pipe not ready yet"
+                time.sleep(0.1)
+            except PermissionError:
+                last_err = "pipe busy"
+                time.sleep(0.1)
+            except Exception as e:
+                last_err = str(e)
+                break
+        if last_err:
+            print(f"[MPV IPC Windows] {last_err} | pipe={MPV_SOCKET!r}")
 
     t = threading.Thread(target=_do, daemon=True)
     t.start()
-    t.join(timeout=timeout)
+    t.join(timeout=timeout + 2.5)
     return result[0]
 
 
@@ -415,15 +499,19 @@ def _play_server_audio(youtube_url: str) -> bool:
         stream_url = _get_audio_stream_url(youtube_url)
         player_bin = _server_player  # may be a full path on Windows
 
+        music_vol = _get_music_volume()
         if "mpv" in os.path.basename(player_bin):
             cmd = [
                 player_bin,
                 "--no-video", "--really-quiet", "--no-terminal",
                 f"--input-ipc-server={MPV_SOCKET_ARG}",
+                f"--volume={music_vol}",   # volume musik dari config['music']['volume']
                 stream_url,
             ]
         else:  # ffplay fallback
-            cmd = [player_bin, "-nodisp", "-autoexit", "-loglevel", "quiet", stream_url]
+            # ffplay: -volume 0-100
+            cmd = [player_bin, "-nodisp", "-autoexit", "-loglevel", "quiet",
+                   "-volume", str(music_vol), stream_url]
 
         _mpv_proc = subprocess.Popen(
             cmd,
@@ -459,22 +547,11 @@ def _broadcast(event_type: str, data: dict):
 
     def _put_all():
         with _sse_clients_lock:
-            # FIX: Clean up dead/closed queues before broadcasting
-            dead_queues = []
             for q in _sse_queues[:]:
                 try:
-                    if q.full():
-                        dead_queues.append(q)
-                        continue
                     q.put_nowait(msg)
                 except asyncio.QueueFull:
-                    dead_queues.append(q)
-                except Exception:
-                    dead_queues.append(q)
-            # Remove dead queues to prevent memory leak
-            for q in dead_queues:
-                if q in _sse_queues:
-                    _sse_queues.remove(q)
+                    pass
 
     _sse_loop.call_soon_threadsafe(_put_all)
 
@@ -515,6 +592,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────
 
 _tts_lock = threading.Lock()   # prevent overlapping TTS playback
+_tts_semaphore = threading.Semaphore(2)  # max 2 TTS threads at once (leak fix)
 
 
 def _get_tts_config() -> dict:
@@ -539,9 +617,14 @@ def _speak_text(text: str):
     """
     if not EDGE_TTS_AVAILABLE:
         return
+    # Semaphore: max 2 TTS threads at once; drop if busy (prevents thread storm)
+    if not _tts_semaphore.acquire(blocking=False):
+        print("[TTS] Skipping – too many TTS threads active")
+        return
 
     tts_cfg = _get_tts_config()
     if not tts_cfg.get("enabled", False):
+        _tts_semaphore.release()
         return
 
     max_len = int(tts_cfg.get("max_length", 100))
@@ -610,13 +693,14 @@ def _speak_text(text: str):
             pass
         return False
 
-    def _play_pygame_wav(wav_path: str) -> bool:
-        """Play WAV with pygame.mixer.Sound – avoids MP3 codec issues entirely."""
+    def _play_pygame_wav(wav_path: str, volume_pct: float = 1.0) -> bool:
+        """Play WAV with pygame.mixer.Sound – supports volume control (0.0–1.0)."""
         try:
             import pygame
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
             sound = pygame.mixer.Sound(wav_path)
+            sound.set_volume(max(0.0, min(1.0, volume_pct)))   # apply TTS volume
             channel = sound.play()
             while channel and channel.get_busy():
                 time.sleep(0.05)
@@ -625,9 +709,16 @@ def _speak_text(text: str):
             print(f"[TTS] pygame WAV playback failed: {e}")
             return False
 
-    def _play_winsound_wav(wav_path: str) -> bool:
-        """Windows built-in winsound – zero dependencies, WAV only."""
+    def _play_winsound_wav(wav_path: str, tts_vol: int = 100) -> bool:
+        """
+        Windows built-in winsound – zero dependencies, WAV only.
+        CATATAN: winsound tidak support volume control.
+        Jika volume TTS bukan default (100), skip dan biarkan mpv/pygame yang handle.
+        """
         if not IS_WINDOWS:
+            return False
+        if tts_vol != 100:
+            # winsound tidak bisa atur volume — skip ke mpv fallback
             return False
         try:
             import winsound
@@ -644,20 +735,24 @@ def _speak_text(text: str):
             return _server_player
         return _find_local_player("mpv")  # reuse existing helper
 
-    def _play_system_mp3(path: str) -> bool:
+    def _play_system_mp3(path: str, tts_vol: int = 100) -> bool:
         """
-        Last-resort: play MP3 directly via a subprocess player.
-        On Windows: tries local mpv (already bundled) with a temp IPC socket name.
-        On Linux: tries ffplay → local/system mpv.
-        --no-input-ipc-server prevents clashing with the music mpv instance.
+        Play MP3 via subprocess player dengan volume control.
+        Menggunakan socket IPC TERPISAH (MPV_TTS_SOCKET_ARG) agar tidak bentrok
+        dengan mpv musik yang sedang berjalan.
+        Windows: mpv dengan --input-ipc-server ke pipe TTS → ffplay fallback.
+        Linux/Mac: ffplay → mpv dengan socket TTS.
         """
         if IS_WINDOWS:
             mpv = _find_local_mpv()
             candidates = []
             if mpv:
+                # Gunakan MPV_TTS_SOCKET_ARG — pipe berbeda dari musik
                 candidates.append(
                     [mpv, "--no-video", "--really-quiet", "--no-terminal",
-                     "--no-input-ipc-server", path]
+                     f"--input-ipc-server={MPV_TTS_SOCKET_ARG}",
+                     f"--volume={tts_vol}",
+                     path]
                 )
             ffmpeg = _find_ffmpeg()
             # ffplay ships with ffmpeg on Windows
@@ -665,18 +760,24 @@ def _speak_text(text: str):
                 ffplay = ffmpeg.replace("ffmpeg.exe", "ffplay.exe").replace("ffmpeg", "ffplay")
                 if os.path.isfile(ffplay):
                     candidates.append(
-                        [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+                        [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet",
+                         "-volume", str(tts_vol), path]
                     )
         elif sys.platform == "darwin":
+            # afplay: -v 0.0-1.0
+            vol_f = round(tts_vol / 100, 2)
             candidates = [
-                ["afplay", path],
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["afplay", "-v", str(vol_f), path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                 "-volume", str(tts_vol), path],
             ]
-        else:  # Linux
+        else:  # Linux — socket TTS terpisah agar tidak bentrok musik
             candidates = [
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                 "-volume", str(tts_vol), path],
                 ["mpv", "--no-video", "--really-quiet", "--no-terminal",
-                 "--no-input-ipc-server", path],
+                 f"--input-ipc-server={MPV_TTS_SOCKET_ARG}",
+                 f"--volume={tts_vol}", path],
             ]
 
         for cmd in candidates:
@@ -693,29 +794,42 @@ def _speak_text(text: str):
                 continue
         return False
 
-    with _tts_lock:
-        mp3_file = None
-        wav_file = None
-        try:
-            import tempfile as _tf
-            mp3_file = _tf.mktemp(suffix=".mp3")
-            wav_file = _tf.mktemp(suffix=".wav")
+    import tempfile as _tf
+    # NamedTemporaryFile ensures files are always tracked (mktemp was deprecated & could leak)
+    _mp3_ntf = _tf.NamedTemporaryFile(suffix=".mp3", delete=False)
+    _wav_ntf = _tf.NamedTemporaryFile(suffix=".wav", delete=False)
+    mp3_file = _mp3_ntf.name
+    wav_file  = _wav_ntf.name
+    _mp3_ntf.close()
+    _wav_ntf.close()
 
+    with _tts_lock:
+        try:
             # ── 1. Generate MP3 via edge-tts ───────────────────
-            asyncio.run(_generate(mp3_file))
+            # Use a fresh event loop to avoid reuse issues across threads
+            _loop = asyncio.new_event_loop()
+            try:
+                _loop.run_until_complete(_generate(mp3_file))
+            finally:
+                _loop.close()
+
+            # ── Hitung volume TTS dari config ──────────────────
+            tts_mpv_vol  = _tts_volume_to_mpv(volume)      # int 0-130 untuk mpv/ffplay
+            tts_pygame_v = max(0.0, min(1.0, tts_mpv_vol / 100))  # float 0.0-1.0 untuk pygame
 
             # ── 2. Convert MP3 → WAV (for pygame / winsound) ──
             wav_ok = _mp3_to_wav(mp3_file, wav_file)
 
             # ── 3. Playback priority chain ─────────────────────
-            #   pygame (WAV) → winsound (WAV, Windows) → system player (MP3)
+            #   pygame (WAV, dengan volume) → winsound (skip jika vol != 100)
+            #   → mpv/ffplay subprocess (WAV atau MP3, dengan volume, socket TTS terpisah)
             played = False
             if wav_ok:
-                played = _play_pygame_wav(wav_file)
+                played = _play_pygame_wav(wav_file, volume_pct=tts_pygame_v)
             if not played and wav_ok:
-                played = _play_winsound_wav(wav_file)
+                played = _play_winsound_wav(wav_file, tts_vol=tts_mpv_vol)
             if not played:
-                played = _play_system_mp3(mp3_file)
+                played = _play_system_mp3(mp3_file, tts_vol=tts_mpv_vol)
             if not played:
                 if IS_WINDOWS:
                     print("[TTS] No playback method worked on Windows.\n"
@@ -728,12 +842,14 @@ def _speak_text(text: str):
         except Exception as e:
             print(f"[TTS] Error: {e}")
         finally:
+            # Always delete temp files AND release semaphore slot
             for f in (mp3_file, wav_file):
-                if f and os.path.exists(f):
-                    try:
+                try:
+                    if os.path.exists(f):
                         os.remove(f)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+            _tts_semaphore.release()
 
 _tiktok_client = None
 _tiktok_connected: bool = False
@@ -965,11 +1081,6 @@ def _start_tiktok_listener():
     if not TIKTOK_AVAILABLE:
         return
 
-    # FIX: Prevent duplicate listener threads
-    if _tiktok_thread is not None and _tiktok_thread.is_alive():
-        print("[TikTok] Listener already running, skipping start")
-        return
-
     # Stop any existing thread gracefully first
     _stop_tiktok_listener()
     _tiktok_stop_flag = False       # re-arm
@@ -1010,11 +1121,89 @@ def _start_tiktok_listener():
                     print(f"[TikTok] Disconnected from @{username}")
                     _broadcast("tiktok_status", {"connected": False, "username": username})
 
+                def _read_user_info_raw(user_info):
+                    """
+                    Read uid + nick directly from a raw betterproto User object,
+                    bypassing ExtendedUser which crashes when proto fields are camelCase.
+                    Uses __dict__ / to_dict() so we get whatever keys actually exist.
+                    """
+                    if user_info is None:
+                        return "", ""
+                    # to_dict() returns the raw proto dict with original field names
+                    try:
+                        d = user_info.to_dict()
+                    except Exception:
+                        d = {}
+                    uid  = str(d.get('uniqueId') or d.get('unique_id') or
+                               getattr(user_info, 'unique_id', None) or
+                               getattr(user_info, 'uniqueId', None) or "").strip()
+                    nick = str(d.get('nickName') or d.get('nick_name') or d.get('nickname') or
+                               getattr(user_info, 'nick_name', None) or
+                               getattr(user_info, 'nickName', None) or
+                               getattr(user_info, 'nickname', None) or "").strip()
+                    return uid, nick
+
+                def _get_avatar_from_user_info(user_info):
+                    """Extract avatar URL directly from raw proto user_info via to_dict()."""
+                    if user_info is None:
+                        return ""
+                    try:
+                        d = user_info.to_dict()
+                    except Exception:
+                        d = {}
+                    # avatarThumb / avatar_thumb is a dict like {"urlList": [...]}
+                    for key in ('avatarThumb', 'avatar_thumb', 'avatarMedium', 'avatar_medium'):
+                        av = d.get(key)
+                        if av and isinstance(av, dict):
+                            urls = av.get('urlList') or av.get('url_list') or []
+                            if urls:
+                                return str(urls[0])
+                    # Also try getattr directly on the proto object
+                    for attr in ('avatar_thumb', 'avatarThumb', 'avatar_medium', 'avatarMedium'):
+                        av = getattr(user_info, attr, None)
+                        if av:
+                            if hasattr(av, 'url_list') and av.url_list:
+                                return str(av.url_list[0])
+                            if hasattr(av, 'm_urls') and av.m_urls:
+                                return str(av.m_urls[0])
+                    return ""
+
+                def _safe_get_user(event):
+                    """
+                    Safely extract (uid, nick) from a TikTokLive event.
+                    First try event.user normally. If that raises TypeError (camelCase
+                    proto field mismatch in ExtendedUser), fall back to reading
+                    event.user_info raw via to_dict() which preserves original keys.
+                    """
+                    # ── First: try event.user the normal way ──
+                    try:
+                        u    = event.user
+                        uid  = str(u.unique_id or "").strip()
+                        nick = str(getattr(u, 'nickname', None) or getattr(u, 'nick_name', None) or uid).strip()
+                        if uid:
+                            return uid, nick or uid
+                    except TypeError:
+                        # ExtendedUser.__init__ got unexpected keyword argument (camelCase mismatch)
+                        pass
+                    except Exception:
+                        pass
+
+                    # ── Fallback: read user_info raw proto directly ──
+                    user_info = getattr(event, 'user_info', None)
+                    uid, nick = _read_user_info_raw(user_info)
+                    if uid:
+                        return uid, nick or uid
+
+                    return "unknown", "unknown"
+
                 def _get_avatar(u):
                     """
                     Extract a plain URL string from TikTokLive user avatar.
                     Handles: ImageModel (m_urls / url_list), plain string, None.
+                    Also accepts raw user_info proto objects.
                     """
+                    if u is None:
+                        return ""
                     # Try known attribute names in order of preference
                     av = (getattr(u, 'avatar_thumb', None) or
                           getattr(u, 'avatar_medium', None) or
@@ -1034,6 +1223,21 @@ def _start_tiktok_listener():
                         return s
                     return ""
 
+                def _get_avatar_safe(event):
+                    """Get avatar from event. Falls back to raw user_info proto if event.user crashes."""
+                    try:
+                        av = _get_avatar(event.user)
+                        if av:
+                            return av
+                    except TypeError:
+                        # ExtendedUser camelCase mismatch – read raw proto instead
+                        pass
+                    except Exception:
+                        pass
+                    user_info = getattr(event, 'user_info', None)
+                    return _get_avatar_from_user_info(user_info)
+               
+
                 @client.on(CommentEvent)
                 async def on_comment(event: CommentEvent):
                     if time.time() < _tiktok_ready_at:
@@ -1047,12 +1251,12 @@ def _start_tiktok_listener():
                         None, _process_tiktok_comment, uid, nick, text, avatar
                     )
 
+
                 @client.on(GiftEvent)
                 async def on_gift(event: GiftEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         gname  = (getattr(event, 'gift_name', None)
                                   or (getattr(event.gift, 'name', 'Gift') if hasattr(event, 'gift') else 'Gift'))
                         gcount = getattr(event, 'repeat_count', 1) or 1
@@ -1064,9 +1268,8 @@ def _start_tiktok_listener():
                 @client.on(LikeEvent)
                 async def on_like(event: LikeEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         count  = getattr(event, 'count', 1) or 1
                         _broadcast("tiktok_chat", {"type":"like","user":nick,"user_id":uid,
                             "avatar":avatar,"detail":f"mengirim {count} like","time":_now()})
@@ -1076,9 +1279,8 @@ def _start_tiktok_listener():
                 @client.on(FollowEvent)
                 async def on_follow(event: FollowEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         _broadcast("tiktok_chat", {"type":"follow","user":nick,"user_id":uid,
                             "avatar":avatar,"detail":"mengikuti akun","time":_now()})
                     except Exception as e:
@@ -1154,8 +1356,14 @@ def player_state():
 def _mpv_watcher():
     """Background thread: auto-advance when mpv exits naturally."""
     global current_song, is_playing, is_paused, _player_killed, _user_request_count, skip_votes
+    _watcher_tick = 0
     while True:
         time.sleep(3)
+        _watcher_tick += 1
+        # Periodic cleanup every ~10 minutes: purge stale per-user request counts
+        # to prevent unbounded growth during long streams
+        if _watcher_tick % 200 == 0:
+            _user_request_count.clear()
         if _mpv_proc is None:
             if _player_killed:
                 _player_killed = False
@@ -1313,26 +1521,10 @@ def _fetch_subtitle_events_for_url(url: str) -> list:
         return []
 
 
-_subtitle_threads = {}
-
-def _cleanup_subtitle_threads():
-    dead = [
-        sid
-        for sid, t in _subtitle_threads.items()
-        if not t.is_alive()
-    ]
-
-    for sid in dead:
-        _subtitle_threads.pop(sid, None)
-
-
-
 def _start_subtitle_broadcaster(song: "Song", song_start_time: float):
     """Spawn a daemon thread that broadcasts subtitle SSE events timed to playback."""
     global _subtitle_song_id
     song_id = song.id
-    # FIX: Clean up old subtitle threads before starting new one
-    _cleanup_subtitle_threads()
     _subtitle_song_id = song_id
 
     def _run():
@@ -1387,9 +1579,6 @@ def _make_song(info: dict, url: str) -> Song:
         added_at=datetime.now(timezone.utc).isoformat(),
     )
 
-MAX_QUEUE_SIZE = 100  # FIX: Prevent infinite queue growth
-
-
 def _add_or_autoplay(song: Song) -> dict:
     global current_song, is_playing, is_paused
     autoplay_url = None
@@ -1409,9 +1598,6 @@ def _add_or_autoplay(song: Song) -> dict:
             }
         else:
             q = _load_queue()
-            # FIX: Enforce queue size limit
-            if len(q) >= MAX_QUEUE_SIZE:
-                q = q[-(MAX_QUEUE_SIZE - 1):]  # Keep last N-1, make room for new
             if shuffle_mode and q:
                 pos = random.randint(0, len(q))
                 q.insert(pos, song.model_dump())
@@ -1931,6 +2117,75 @@ def stop_player():
     _broadcast_player_state()
     return {"message": "Player stopped"}
 
+# ─── Volume control ───────────────────────────────────────────
+# Loaded from config.json on startup; persisted on every change.
+# config.json keys:  settings.music_volume (int 0-150)
+#                    tts.volume            (str edge-tts format, e.g. "+20%")
+#                    tts.volume_pct        (int -50 to +100, source of truth)
+
+def _vol_load_from_config() -> tuple[int, int]:
+    """Read music_volume and tts volume_pct from config. Returns (music, tts_pct)."""
+    cfg = _load_config()
+    music_raw = cfg.get("settings", {}).get("music_volume")
+    if music_raw is None:
+        music_raw = cfg.get("music", {}).get("volume", 100)
+    try:
+        music = max(0, min(150, int(music_raw)))
+    except (TypeError, ValueError):
+        music = 100
+    try:
+        tts_pct = max(-50, min(100, int(cfg.get("tts", {}).get("volume_pct", 0))))
+    except (TypeError, ValueError):
+        tts_pct = 0
+    return music, tts_pct
+
+_music_volume: int
+_tts_volume_pct: int
+_music_volume, _tts_volume_pct = _vol_load_from_config()
+
+def _vol_save_to_config(music: int, tts_pct: int):
+    """Persist both volume values into config.json atomically."""
+    global _config_cache, _config_mtime
+    try:
+        cfg = _load_config()
+        cfg.setdefault("settings", {})["music_volume"] = music
+        tts_cfg = cfg.setdefault("tts", {})
+        sign = "+" if tts_pct >= 0 else ""
+        tts_cfg["volume"]     = f"{sign}{tts_pct}%"   # edge-tts string
+        tts_cfg["volume_pct"] = tts_pct                # integer for easy read-back
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        _config_cache = cfg
+        _config_mtime = os.path.getmtime(CONFIG_FILE)
+    except Exception as e:
+        print(f"[Volume] Failed to save config: {e}")
+
+class VolumeRequest(BaseModel):
+    music: Optional[int] = None   # 0–150
+    tts: Optional[int] = None     # -50 to +100
+
+@app.get("/player/volume", tags=["player"])
+def get_volume():
+    return {"music": _music_volume, "tts": _tts_volume_pct}
+
+@app.post("/player/volume", tags=["player"])
+def set_volume(req: VolumeRequest):
+    global _music_volume, _tts_volume_pct
+    changed = False
+    if req.music is not None:
+        val = max(0, min(150, int(req.music)))
+        _music_volume = val
+        changed = True
+        # Apply immediately to running mpv (realtime, no restart needed)
+        if _mpv_proc and _mpv_proc.poll() is None and _server_player and "mpv" in _server_player:
+            _mpv_send(["set_property", "volume", val])
+    if req.tts is not None:
+        _tts_volume_pct = max(-50, min(100, int(req.tts)))
+        changed = True
+    if changed:
+        _vol_save_to_config(_music_volume, _tts_volume_pct)
+    return {"music": _music_volume, "tts": _tts_volume_pct}
+
 @app.get("/player/mpv/status", tags=["player"])
 def mpv_status():
     running = _mpv_proc is not None and _mpv_proc.poll() is None
@@ -2023,6 +2278,10 @@ def save_config(body: dict):
     except Exception as e:
         raise HTTPException(500, detail=f"Could not save config: {e}")
     _config = merged
+    # Also invalidate the mtime-based cache so _load_config() returns fresh data
+    global _config_cache, _config_mtime
+    _config_cache = merged
+    _config_mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else 0.0
     overlay_merged = {**_DEFAULT_OVERLAY_CONFIG, **merged.get("overlay", {})}
     _broadcast("overlay_config", overlay_merged)
     return {"message": "Config saved", "config": merged}
@@ -2085,11 +2344,17 @@ def test_badword(body: dict):
 #  OBS Overlay SSE
 # ─────────────────────────────────────────────────────────────
 
+MAX_SSE_CLIENTS = 20  # prevent unbounded client list growth
+
 @app.get("/overlay/events", tags=["overlay"])
 async def overlay_events(request: Request):
     """Server-Sent Events endpoint for OBS overlay."""
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
     with _sse_clients_lock:
+        # Evict disconnected/stale queues before adding new client
+        if len(_sse_queues) >= MAX_SSE_CLIENTS:
+            # Drop the oldest entry to prevent list growth
+            _sse_queues.pop(0)
         _sse_queues.append(q)
 
     async def generate():
@@ -2225,6 +2490,10 @@ def save_overlay_config(body: dict):
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         raise HTTPException(500, detail=f"Could not save config: {e}")
+    # Invalidate mtime-based config cache
+    global _config_cache, _config_mtime
+    _config_cache = cfg
+    _config_mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else 0.0
     merged = {**_DEFAULT_OVERLAY_CONFIG, **current}
     _broadcast("overlay_config", merged)
     return {"message": "Config saved", "overlay": merged}
@@ -2268,9 +2537,15 @@ async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
     except Exception as e:
         raise HTTPException(502, detail=f"Could not fetch avatar: {e}")
 
-    # Evict oldest if cache > 200 entries
-    if len(cache) >= 200:
+    # Evict oldest entries: cap at 100 entries OR ~20 MB total
+    MAX_CACHE_ENTRIES = 100
+    MAX_CACHE_BYTES   = 20 * 1024 * 1024  # 20 MB
+    total_bytes = sum(len(v[0]) for v in cache.values())
+    while len(cache) >= MAX_CACHE_ENTRIES or total_bytes > MAX_CACHE_BYTES:
+        if not cache:
+            break
         oldest = min(cache, key=lambda k: cache[k][2])
+        total_bytes -= len(cache[oldest][0])
         del cache[oldest]
 
     cache[url] = (data, ct, _t.time())
