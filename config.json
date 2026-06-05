@@ -39,7 +39,8 @@
     "_comment": "Text-to-Speech untuk komentar chat biasa (bukan command, bukan diawali @)",
     "_comment_voice": "Contoh suara: id-ID-ArdiNeural (pria ID), id-ID-GadisNeural (wanita ID), en-US-GuyNeural (pria EN), en-US-JennyNeural (wanita EN)",
     "_comment_rate": "Kecepatan bicara: -50% s/d +100% (default +0%)",
-    "_comment_volume": "Volume: -50% s/d +100% (default +0%)",
+    "_comment_volume": "Volume TTS: -50% s/d +100% (default +0%). Juga dikontrol dari slider di Player tab.",
+    "_comment_volume_pct": "Integer source-of-truth untuk volume TTS, dipakai slider Player tab.",
     "_comment_max_length": "Batas karakter teks yang dibaca (lebih panjang = di-skip)"
   },
   "overlay": {

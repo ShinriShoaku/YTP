@@ -88,14 +88,25 @@ app.add_middleware(
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
+_config_mtime: float = 0.0
+_config_cache: dict = {}
+
 def _load_config() -> dict:
+    """Load config.json. Cached; reloads only when file changes on disk."""
+    global _config_cache, _config_mtime
     if not os.path.exists(CONFIG_FILE):
         return {}
     try:
+        mtime = os.path.getmtime(CONFIG_FILE)
+        if mtime == _config_mtime and _config_mtime > 0:
+            return _config_cache
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _config_cache = data
+        _config_mtime = mtime
+        return data
     except Exception:
-        return {}
+        return _config_cache
 
 _config = _load_config()
 
@@ -127,29 +138,43 @@ def _get_settings() -> dict:
 
 BADWORDS_FILE = os.path.join(BASE_DIR, "badwords.txt")
 
+_badwords_cache: list = []
+_badwords_mtime: float = 0.0
+
 def _load_badwords() -> list:
-    """Load bad words list from badwords.txt. Returns list of lowercase strings."""
+    """Load bad words list from badwords.txt. Cached in memory; reloads only if file changes."""
+    global _badwords_cache, _badwords_mtime
     if not os.path.exists(BADWORDS_FILE):
+        _badwords_cache = []
         return []
     try:
+        mtime = os.path.getmtime(BADWORDS_FILE)
+        if mtime == _badwords_mtime and _badwords_mtime > 0:
+            return _badwords_cache  # no change – return cached list
         with open(BADWORDS_FILE, "r", encoding="utf-8") as f:
             words = []
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     words.append(line.lower())
-            return words
+        _badwords_cache = words
+        _badwords_mtime = mtime
+        return words
     except Exception:
-        return []
+        return _badwords_cache
 
 def _save_badwords(words: list):
-    """Save bad words list to badwords.txt."""
+    """Save bad words list to badwords.txt and invalidate in-memory cache."""
+    global _badwords_cache, _badwords_mtime
     with open(BADWORDS_FILE, "w", encoding="utf-8") as f:
         f.write("# Filter Kata Kotor / Bad Word Filter\n")
         f.write("# Satu kata per baris. Tidak case-sensitive.\n")
         f.write("# Baris yang diawali # dianggap komentar dan diabaikan.\n#\n")
         for w in words:
             f.write(w.strip().lower() + "\n")
+    # Invalidate cache so next read picks up the new file
+    _badwords_cache = list(words)
+    _badwords_mtime = os.path.getmtime(BADWORDS_FILE) if os.path.exists(BADWORDS_FILE) else 0.0
 
 def _contains_badword(text: str) -> bool:
     """
@@ -216,25 +241,42 @@ skip_votes: set = set()   # set of user IDs who voted skip
 _recent_requests: list = []  # last 20 TikTok requests for overlay
 _subtitle_song_id: Optional[str] = None   # tracks which song subtitle thread is for
 
+_queue_cache: list = []
+_queue_mtime: float = 0.0
+
 def _load_queue() -> List[dict]:
+    """Load queue from disk. Cached in memory; reloads only when file changes."""
+    global _queue_cache, _queue_mtime
     if not os.path.exists(QUEUE_FILE):
+        _queue_cache = []
         return []
     try:
+        mtime = os.path.getmtime(QUEUE_FILE)
+        if mtime == _queue_mtime and _queue_mtime > 0:
+            return list(_queue_cache)  # return a copy to avoid external mutation
         with open(QUEUE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _queue_cache = data
+        _queue_mtime = mtime
+        return list(data)
     except Exception:
-        return []
+        return list(_queue_cache)
 
 def _save_queue(q: List[dict]):
+    global _queue_cache, _queue_mtime
     with open(QUEUE_FILE, "w", encoding="utf-8") as f:
         json.dump(q, f, indent=2, ensure_ascii=False)
+    # Update cache immediately so subsequent reads don't re-read the file
+    _queue_cache = list(q)
+    _queue_mtime = os.path.getmtime(QUEUE_FILE) if os.path.exists(QUEUE_FILE) else 0.0
 
 def _queue_snapshot():
     q = _load_queue()
     return [{"position": i, "song": s} for i, s in enumerate(q)]
 
 def _queue_len() -> int:
-    return len(_load_queue())
+    """Return queue length from in-memory cache – no disk read needed."""
+    return len(_queue_cache)
 
 def _add_recent_request(entry: dict):
     """Keep last 20 TikTok requests for the overlay."""
@@ -489,6 +531,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────
 
 _tts_lock = threading.Lock()   # prevent overlapping TTS playback
+_tts_semaphore = threading.Semaphore(2)  # max 2 TTS threads at once (leak fix)
 
 
 def _get_tts_config() -> dict:
@@ -513,9 +556,14 @@ def _speak_text(text: str):
     """
     if not EDGE_TTS_AVAILABLE:
         return
+    # Semaphore: max 2 TTS threads at once; drop if busy (prevents thread storm)
+    if not _tts_semaphore.acquire(blocking=False):
+        print("[TTS] Skipping – too many TTS threads active")
+        return
 
     tts_cfg = _get_tts_config()
     if not tts_cfg.get("enabled", False):
+        _tts_semaphore.release()
         return
 
     max_len = int(tts_cfg.get("max_length", 100))
@@ -667,16 +715,24 @@ def _speak_text(text: str):
                 continue
         return False
 
-    with _tts_lock:
-        mp3_file = None
-        wav_file = None
-        try:
-            import tempfile as _tf
-            mp3_file = _tf.mktemp(suffix=".mp3")
-            wav_file = _tf.mktemp(suffix=".wav")
+    import tempfile as _tf
+    # NamedTemporaryFile ensures files are always tracked (mktemp was deprecated & could leak)
+    _mp3_ntf = _tf.NamedTemporaryFile(suffix=".mp3", delete=False)
+    _wav_ntf = _tf.NamedTemporaryFile(suffix=".wav", delete=False)
+    mp3_file = _mp3_ntf.name
+    wav_file  = _wav_ntf.name
+    _mp3_ntf.close()
+    _wav_ntf.close()
 
+    with _tts_lock:
+        try:
             # ── 1. Generate MP3 via edge-tts ───────────────────
-            asyncio.run(_generate(mp3_file))
+            # Use a fresh event loop to avoid reuse issues across threads
+            _loop = asyncio.new_event_loop()
+            try:
+                _loop.run_until_complete(_generate(mp3_file))
+            finally:
+                _loop.close()
 
             # ── 2. Convert MP3 → WAV (for pygame / winsound) ──
             wav_ok = _mp3_to_wav(mp3_file, wav_file)
@@ -702,12 +758,14 @@ def _speak_text(text: str):
         except Exception as e:
             print(f"[TTS] Error: {e}")
         finally:
+            # Always delete temp files AND release semaphore slot
             for f in (mp3_file, wav_file):
-                if f and os.path.exists(f):
-                    try:
+                try:
+                    if os.path.exists(f):
                         os.remove(f)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+            _tts_semaphore.release()
 
 _tiktok_client = None
 _tiktok_connected: bool = False
@@ -1123,8 +1181,14 @@ def player_state():
 def _mpv_watcher():
     """Background thread: auto-advance when mpv exits naturally."""
     global current_song, is_playing, is_paused, _player_killed, _user_request_count, skip_votes
+    _watcher_tick = 0
     while True:
         time.sleep(3)
+        _watcher_tick += 1
+        # Periodic cleanup every ~10 minutes: purge stale per-user request counts
+        # to prevent unbounded growth during long streams
+        if _watcher_tick % 200 == 0:
+            _user_request_count.clear()
         if _mpv_proc is None:
             if _player_killed:
                 _player_killed = False
@@ -1878,6 +1942,68 @@ def stop_player():
     _broadcast_player_state()
     return {"message": "Player stopped"}
 
+# ─── Volume control ───────────────────────────────────────────
+# Loaded from config.json on startup; persisted on every change.
+# config.json keys:  settings.music_volume (int 0-150)
+#                    tts.volume            (str edge-tts format, e.g. "+20%")
+#                    tts.volume_pct        (int -50 to +100, source of truth)
+
+def _vol_load_from_config() -> tuple[int, int]:
+    """Read music_volume and tts volume_pct from config. Returns (music, tts_pct)."""
+    cfg = _load_config()
+    music = int(cfg.get("settings", {}).get("music_volume", 100))
+    music = max(0, min(150, music))
+    tts_pct = int(cfg.get("tts", {}).get("volume_pct", 0))
+    tts_pct = max(-50, min(100, tts_pct))
+    return music, tts_pct
+
+_music_volume: int
+_tts_volume_pct: int
+_music_volume, _tts_volume_pct = _vol_load_from_config()
+
+def _vol_save_to_config(music: int, tts_pct: int):
+    """Persist both volume values into config.json atomically."""
+    global _config_cache, _config_mtime
+    try:
+        cfg = _load_config()
+        cfg.setdefault("settings", {})["music_volume"] = music
+        tts_cfg = cfg.setdefault("tts", {})
+        sign = "+" if tts_pct >= 0 else ""
+        tts_cfg["volume"]     = f"{sign}{tts_pct}%"   # edge-tts string
+        tts_cfg["volume_pct"] = tts_pct                # integer for easy read-back
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        _config_cache = cfg
+        _config_mtime = os.path.getmtime(CONFIG_FILE)
+    except Exception as e:
+        print(f"[Volume] Failed to save config: {e}")
+
+class VolumeRequest(BaseModel):
+    music: Optional[int] = None   # 0–150
+    tts: Optional[int] = None     # -50 to +100
+
+@app.get("/player/volume", tags=["player"])
+def get_volume():
+    return {"music": _music_volume, "tts": _tts_volume_pct}
+
+@app.post("/player/volume", tags=["player"])
+def set_volume(req: VolumeRequest):
+    global _music_volume, _tts_volume_pct
+    changed = False
+    if req.music is not None:
+        val = max(0, min(150, int(req.music)))
+        _music_volume = val
+        changed = True
+        # Apply immediately to running mpv (realtime, no restart needed)
+        if _mpv_proc and _mpv_proc.poll() is None and _server_player and "mpv" in _server_player:
+            _mpv_send(["set_property", "volume", val])
+    if req.tts is not None:
+        _tts_volume_pct = max(-50, min(100, int(req.tts)))
+        changed = True
+    if changed:
+        _vol_save_to_config(_music_volume, _tts_volume_pct)
+    return {"music": _music_volume, "tts": _tts_volume_pct}
+
 @app.get("/player/mpv/status", tags=["player"])
 def mpv_status():
     running = _mpv_proc is not None and _mpv_proc.poll() is None
@@ -1970,6 +2096,10 @@ def save_config(body: dict):
     except Exception as e:
         raise HTTPException(500, detail=f"Could not save config: {e}")
     _config = merged
+    # Also invalidate the mtime-based cache so _load_config() returns fresh data
+    global _config_cache, _config_mtime
+    _config_cache = merged
+    _config_mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else 0.0
     overlay_merged = {**_DEFAULT_OVERLAY_CONFIG, **merged.get("overlay", {})}
     _broadcast("overlay_config", overlay_merged)
     return {"message": "Config saved", "config": merged}
@@ -2032,11 +2162,17 @@ def test_badword(body: dict):
 #  OBS Overlay SSE
 # ─────────────────────────────────────────────────────────────
 
+MAX_SSE_CLIENTS = 20  # prevent unbounded client list growth
+
 @app.get("/overlay/events", tags=["overlay"])
 async def overlay_events(request: Request):
     """Server-Sent Events endpoint for OBS overlay."""
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
     with _sse_clients_lock:
+        # Evict disconnected/stale queues before adding new client
+        if len(_sse_queues) >= MAX_SSE_CLIENTS:
+            # Drop the oldest entry to prevent list growth
+            _sse_queues.pop(0)
         _sse_queues.append(q)
 
     async def generate():
@@ -2172,6 +2308,10 @@ def save_overlay_config(body: dict):
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         raise HTTPException(500, detail=f"Could not save config: {e}")
+    # Invalidate mtime-based config cache
+    global _config_cache, _config_mtime
+    _config_cache = cfg
+    _config_mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else 0.0
     merged = {**_DEFAULT_OVERLAY_CONFIG, **current}
     _broadcast("overlay_config", merged)
     return {"message": "Config saved", "overlay": merged}
@@ -2215,9 +2355,15 @@ async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
     except Exception as e:
         raise HTTPException(502, detail=f"Could not fetch avatar: {e}")
 
-    # Evict oldest if cache > 200 entries
-    if len(cache) >= 200:
+    # Evict oldest entries: cap at 100 entries OR ~20 MB total
+    MAX_CACHE_ENTRIES = 100
+    MAX_CACHE_BYTES   = 20 * 1024 * 1024  # 20 MB
+    total_bytes = sum(len(v[0]) for v in cache.values())
+    while len(cache) >= MAX_CACHE_ENTRIES or total_bytes > MAX_CACHE_BYTES:
+        if not cache:
+            break
         oldest = min(cache, key=lambda k: cache[k][2])
+        total_bytes -= len(cache[oldest][0])
         del cache[oldest]
 
     cache[url] = (data, ct, _t.time())
