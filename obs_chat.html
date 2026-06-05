@@ -32,10 +32,10 @@ html, body {
   height: 350px;
   display: flex; flex-direction: column;
   pointer-events: auto;
-  resize: both;
-  overflow: auto;
   min-width: 220px; max-width: 600px;
   min-height: 100px; max-height: 900px;
+  /* resize handled via JS to avoid flex collapse */
+  overflow: visible;
 }
 #chat-panel.pos-right { left: auto; right: 20px; }
 #chat-panel.hidden { display: none; }
@@ -87,10 +87,13 @@ html, body {
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
   padding: 6px 8px 10px;
   display: flex; flex-direction: column; gap: 3px;
-  flex: 1;
+  flex: 1 1 auto;     /* fix: allow shrink but don't collapse */
+  min-height: 0;      /* fix: required for flex children to scroll properly */
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  /* FIX: Ensure proper scroll behavior */
+  scroll-behavior: smooth;
 }
 #chat-feed::-webkit-scrollbar { display: none; }
 
@@ -105,6 +108,7 @@ html, body {
   /* slide in from left with spring */
   animation: msgIn .4s cubic-bezier(.22,.68,0,1.2) both;
   transform-origin: left center;
+  flex-shrink: 0;  /* FIX: prevent layout compression */
 }
 
 /* accent left bar */
@@ -141,9 +145,9 @@ html, body {
   animation: msgOut .35s ease forwards;
 }
 @keyframes msgOut {
-  0%   { opacity:1; transform: translateX(0) scaleY(1); max-height: 80px; }
+  0%   { opacity:1; transform: translateX(0) scaleY(1); }
   40%  { transform: translateX(8px); }
-  100% { opacity:0; transform: translateX(20px) scaleY(0.7); max-height: 0; padding: 0; margin: 0; }
+  100% { opacity:0; transform: translateX(20px) scaleY(0.7); }
 }
 
 /* ─── Avatar ─────────────────────────────────────────────── */
@@ -204,6 +208,7 @@ html, body {
   padding: 6px 9px; border-radius: 9px;
   position: relative; overflow: hidden;
   animation: bannerIn .45s cubic-bezier(.22,.68,0,1.2) both;
+  flex-shrink: 0;  /* FIX: prevent layout compression */
 }
 .ev-banner::after {
   content: '';
@@ -308,7 +313,24 @@ let _totalCount = 0;
 
 /* ── Fade timers ──────────────────────────────────────────
    WeakRef-based: no strong reference to DOM elements */
-const _fadeTimers = [];   // [{wr: WeakRef<el>, t: timeoutId}]
+// Active fade timers — Map<elementId, timeoutId> for proper cleanup
+const _activeTimers = new Map();
+let _timerIdCounter = 0;
+
+/* ── Like banner throttle — collapse rapid like events into one banner ── */
+let _lastLikeBannerTs = 0;
+const LIKE_BANNER_COOLDOWN = 1500; // ms between like banners
+let _likeBatch = 0;
+let _likeTimer = null;
+function throttledLike(x, y, count) {
+  _likeBatch += Math.min(count, 8);
+  if (_likeTimer) return;
+  _likeTimer = setTimeout(() => {
+    spawnHearts(x, y, Math.min(_likeBatch, 8));
+    _likeBatch = 0;
+    _likeTimer = null;
+  }, 300);
+}
 
 /* ═══════════════════════════════════════════════════════
    AVATAR LOADING
@@ -337,10 +359,11 @@ async function loadAvatar(userId, rawUrl) {
     img.decoding = 'async';
 
     img.onload = () => {
-      // Evict oldest if over limit
+      // Evict oldest if over limit — remove 20% oldest entries
       if (_avCache.size >= CACHE_MAX) {
-        const oldest = [..._avCache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
-        if (oldest) _avCache.delete(oldest[0]);
+        const entries = [..._avCache.entries()].sort((a,b) => a[1].ts - b[1].ts);
+        const toRemove = entries.slice(0, Math.ceil(CACHE_MAX * 0.2));
+        toRemove.forEach(([key]) => _avCache.delete(key));
       }
       _avCache.set(userId, { src: proxySrc, ts: Date.now() });
       _avPending.delete(userId);
@@ -385,13 +408,18 @@ function avatarStyle(userId) {
 const fx = document.getElementById('fx-layer');
 
 // cleanup particle timers to avoid leaks
-const _fxTimers = [];
+const _fxTimers = new Set();
 function _addFxEl(el, lifetimeMs) {
   fx.appendChild(el);
-  const tid = setTimeout(() => el.remove(), lifetimeMs + 100);
-  _fxTimers.push(tid);
-  // prune completed timers periodically
-  if (_fxTimers.length > 60) _fxTimers.splice(0, 30);
+  const tid = setTimeout(() => {
+    el.remove();
+    _fxTimers.delete(tid);
+  }, lifetimeMs + 100);
+  _fxTimers.add(tid);
+  // FIX: Hard cap particles to prevent memory bloat
+  while (fx.children.length > 60) {
+    if (fx.firstChild) fx.firstChild.remove();
+  }
 }
 
 function spawnEmoji(emoji, x, y) {
@@ -453,6 +481,17 @@ function spawnStars(x, y, count = 6) {
 }
 
 /* Position near the panel for effects */
+function _clearAllFx() {
+  _fxTimers.forEach(tid => clearTimeout(tid));
+  _fxTimers.clear();
+  while (fx.firstChild) fx.firstChild.remove();
+}
+
+function _clearAvatarCache() {
+  _avCache.clear();
+  _avPending.clear();
+}
+
 function panelCenter() {
   const p = document.getElementById('chat-panel');
   const r = p.getBoundingClientRect();
@@ -485,39 +524,68 @@ function esc(s) {
 function scheduleFade(el) {
   const ms = FADE_MS;
   if (!ms) return;
-  const wr = new WeakRef(el);
+
+  const id = ++_timerIdCounter;
   const tid = setTimeout(() => {
-    const node = wr.deref();
-    if (node && node.isConnected) {
-      node.classList.add('out');
-      setTimeout(() => { if (node.isConnected) node.remove(); updateCount(); }, 380);
+    if (el.isConnected) {
+      el.classList.add('out');
+      const removeTid = setTimeout(() => {
+        if (el.isConnected) {
+          el.remove();
+          updateCount();
+        }
+        _activeTimers.delete(id + '_remove');
+      }, 380);
+      _activeTimers.set(id + '_remove', removeTid);
     }
+    _activeTimers.delete(id);
   }, ms);
-  // store tid loosely for potential early cancel (not strictly needed for no-leak)
+  _activeTimers.set(id, tid);
+}
+
+function _clearAllTimers() {
+  _activeTimers.forEach(tid => clearTimeout(tid));
+  _activeTimers.clear();
 }
 
 /* ═══════════════════════════════════════════════════════
    TRIM — remove oldest rows beyond MAX_MSGS
+   Only counts rows NOT already animating out to avoid over-removal
    ═══════════════════════════════════════════════════════ */
 function trimFeed() {
   const feed = document.getElementById('chat-feed');
-  const rows = feed.children;
-  while (rows.length > MAX_MSGS) {
-    const old = rows[0];
+  const rows = [...feed.children].filter(el => !el.classList.contains('out'));
+  let excess = rows.length - MAX_MSGS;
+  for (let i = 0; excess > 0 && i < rows.length; i++, excess--) {
+    const old = rows[i];
     old.classList.add('out');
     const ref = new WeakRef(old);
-    setTimeout(() => { const n = ref.deref(); if (n && n.isConnected) n.remove(); }, 380);
+    setTimeout(() => {
+      const n = ref.deref();
+      if (n && n.isConnected) { n.remove(); updateCount(); }
+    }, 380);
   }
 }
 
 /* Scroll feed to bottom so newest message is always visible */
 function scrollBottom() {
   const feed = document.getElementById('chat-feed');
+  if (!feed) return;
+
+  // Method 1: Standard scrollTop
   feed.scrollTop = feed.scrollHeight;
+
+  // Method 2: scrollTo with behavior
+  feed.scrollTo({ top: feed.scrollHeight, behavior: 'auto' });
+
+  // Method 3: scrollIntoView on last child
+  const lastChild = feed.lastElementChild;
+  if (lastChild) {
+    lastChild.scrollIntoView({ block: 'end', behavior: 'auto' });
+  }
 }
 
 function updateCount() {
-  _totalCount;
   document.getElementById('hcnt').textContent = _totalCount + ' pesan';
 }
 
@@ -535,6 +603,18 @@ async function renderMsg(data) {
 
   /* ── Event banners: gift / like / follow ── */
   if (type === 'gift' || type === 'like' || type === 'follow') {
+    // Throttle like banners — don't flood the feed
+    if (type === 'like') {
+      const now = Date.now();
+      if (now - _lastLikeBannerTs < LIKE_BANNER_COOLDOWN) {
+        // still do FX but skip banner
+        const pc2 = panelCenter();
+        throttledLike(pc2.x, pc2.y, Math.min(parseInt(data.count) || 1, 8));
+        return;
+      }
+      _lastLikeBannerTs = now;
+    }
+
     const row     = document.createElement('div');
     const cls     = { gift:'ev-gift', like:'ev-like', follow:'ev-follow' }[type];
     const icon    = { gift:'🎁', like:'❤️', follow:'👤' }[type];
@@ -552,13 +632,16 @@ async function renderMsg(data) {
 
     feed.appendChild(row);
     trimFeed();
-    scrollBottom();
+    // FIX: Double rAF to ensure scroll happens after layout complete
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => scrollBottom());
+    });
     scheduleFade(row);
 
     // FX — like count from event detail, capped at 8
     if (type === 'like') {
       const likeCount = Math.min(parseInt(data.count) || 1, 8);
-      spawnHearts(pc.x, pc.y, likeCount);
+      throttledLike(pc.x, pc.y, likeCount);
     }
     if (type === 'follow') spawnStars(pc.x, pc.y, 8);
     if (type === 'gift') {
@@ -652,12 +735,17 @@ function setAvatarImg(avEl, src) {
     img.decoding = 'async';
     avEl.appendChild(img);
   }
-  // IMPORTANT: assign handlers BEFORE setting src to avoid race condition
-  // when the browser has the image cached and fires load synchronously
-  img.onload  = () => img.classList.add('loaded');
-  img.onerror = () => { img.remove(); _avCache.delete(img._uid); };
-  img._uid    = avEl._uid || '';
-  img.src     = src;
+  // FIX: Remove old handlers first to prevent memory leaks
+  img.onload = null;
+  img.onerror = null;
+
+  img.onload = () => img.classList.add('loaded');
+  img.onerror = () => {
+    img.remove();
+    if (img._uid) _avCache.delete(img._uid);
+  };
+  img._uid = avEl._uid || '';
+  img.src = src;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -682,13 +770,48 @@ function setLive(on) {
 /* ═══════════════════════════════════════════════════════
    SSE
    ═══════════════════════════════════════════════════════ */
+let _eventSource = null;
+
 function connect() {
+  // Close existing connection
+  if (_eventSource) {
+    _eventSource.close();
+    _eventSource = null;
+  }
+
   const es = new EventSource(`${API}/overlay/events`);
+  _eventSource = es;
   es.addEventListener('init',           e => { const d = JSON.parse(e.data); setLive(d.tiktok_connected); });
   es.addEventListener('tiktok_status',  e => { setLive(JSON.parse(e.data).connected); });
   es.addEventListener('tiktok_chat',    e => { renderMsg(JSON.parse(e.data)); });
   es.addEventListener('overlay_config', e => { applyConfig(JSON.parse(e.data)); });
-  es.onerror = () => { es.close(); setTimeout(connect, 5000); };
+  es.onerror = () => {
+    es.close();
+    _eventSource = null;
+    setTimeout(connect, 5000);
+  };
+
+  es.onopen = () => {
+    console.log('[Chat] SSE connected');
+  };
+}
+
+function disconnect() {
+  if (_eventSource) {
+    _eventSource.close();
+    _eventSource = null;
+  }
+}
+
+function cleanup() {
+  disconnect();
+  _clearAllTimers();
+  _clearAllFx();
+  _clearAvatarCache();
+  const feed = document.getElementById('chat-feed');
+  while (feed.firstChild) feed.firstChild.remove();
+  _totalCount = 0;
+  updateCount();
 }
 
 async function init() {
@@ -698,6 +821,10 @@ async function init() {
   } catch(_) {}
   connect();
 }
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', cleanup);
+window.addEventListener('pagehide', cleanup);
 
 init();
 </script>
