@@ -780,6 +780,70 @@ _tiktok_thread = None            # reference to listener thread
 _user_request_count: dict = {}
 
 
+# ─────────────────────────────────────────────────────────────
+#  TikTok Emote Shortcode → Unicode Emoji Converter
+# ─────────────────────────────────────────────────────────────
+
+_TIKTOK_EMOTES: dict = {
+    # Tangan / gestur
+    "[thumb]":       "👍", "[thumbsup]":    "👍", "[thumbsdown]":  "👎",
+    "[ok]":          "👌", "[clap]":        "👏", "[wave]":        "👋",
+    "[strong]":      "💪", "[victory]":     "✌️", "[handshake]":   "🤝",
+    "[point]":       "👉", "[raise]":       "🙋", "[pray]":        "🙏",
+    # Ekspresi wajah
+    "[smile]":       "😊", "[laugh]":       "😂", "[lol]":         "😂",
+    "[haha]":        "😄", "[cry]":         "😢", "[sad]":         "😢",
+    "[tear]":        "😭", "[angry]":       "😠", "[rage]":        "😡",
+    "[wow]":         "😮", "[surprised]":   "😮", "[shock]":       "😲",
+    "[cool]":        "😎", "[wink]":        "😉", "[blush]":       "😊",
+    "[kiss]":        "😘", "[love]":        "😍", "[yum]":         "😋",
+    "[think]":       "🤔", "[sleep]":       "😴", "[dizzy]":       "😵",
+    "[sick]":        "🤒", "[mask]":        "😷", "[nerd]":        "🤓",
+    "[sweat]":       "😅", "[nervous]":     "😬", "[fear]":        "😨",
+    "[scream]":      "😱", "[dead]":        "💀", "[skull]":       "💀",
+    "[ghost]":       "👻", "[alien]":       "👽", "[robot]":       "🤖",
+    # Hati
+    "[heart]":       "❤️", "[hearts]":      "❤️", "[like]":        "❤️",
+    "[redheart]":    "❤️", "[pinkheart]":   "🩷", "[orangeheart]": "🧡",
+    "[yellowheart]": "💛", "[greenheart]":  "💚", "[blueheart]":   "💙",
+    "[purpleheart]": "💜", "[blackheart]":  "🖤", "[brokenheart]": "💔",
+    "[heartbeat]":   "💓", "[sparkleheart]":"💖", "[revolving]":   "💞",
+    # Simbol & objek
+    "[fire]":        "🔥", "[star]":        "⭐", "[sparkles]":    "✨",
+    "[gift]":        "🎁", "[rose]":        "🌹", "[flower]":      "🌸",
+    "[money]":       "💰", "[coin]":        "🪙", "[crown]":       "👑",
+    "[gem]":         "💎", "[trophy]":      "🏆", "[medal]":       "🥇",
+    "[rocket]":      "🚀", "[bomb]":        "💣", "[lightning]":   "⚡",
+    "[rainbow]":     "🌈", "[sun]":         "☀️", "[moon]":        "🌙",
+    "[cloud]":       "☁️", "[snow]":        "❄️", "[umbrella]":    "☂️",
+    # Musik & hiburan
+    "[music]":       "🎵", "[mic]":         "🎤", "[guitar]":      "🎸",
+    "[dance]":       "💃", "[party]":       "🎉", "[confetti]":    "🎊",
+    "[cake]":        "🎂", "[balloon]":     "🎈", "[100]":         "💯",
+    # Makanan & minuman
+    "[pizza]":       "🍕", "[burger]":      "🍔", "[fries]":       "🍟",
+    "[coffee]":      "☕", "[boba]":        "🧋", "[beer]":        "🍺",
+    "[wine]":        "🍷", "[cake2]":       "🍰", "[icecream]":    "🍦",
+    # Hewan
+    "[cat]":         "🐱", "[dog]":         "🐶", "[bear]":        "🐻",
+    "[panda]":       "🐼", "[rabbit]":      "🐰", "[fox]":         "🦊",
+    "[lion]":        "🦁", "[tiger]":       "🐯", "[monkey]":      "🐵",
+    # Olahraga
+    "[soccer]":      "⚽", "[basketball]":  "🏀", "[football]":    "🏈",
+    "[gaming]":      "🎮", "[trophy2]":     "🏆",
+}
+
+def _convert_tiktok_emotes(text: str) -> str:
+    """
+    Konversi TikTok emote shortcode (mis. [thumb]) ke karakter emoji unicode.
+    Lookup O(1) per token, tidak ada regex kompleks.
+    """
+    import re
+    def _replace(m: "re.Match") -> str:
+        return _TIKTOK_EMOTES.get(m.group(0).lower(), m.group(0))
+    return re.sub(r'\[[^\]]{1,20}\]', _replace, text)
+
+
 def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_url: str = ""):
     """
     Parse and handle a TikTok comment. Called from async thread executor.
@@ -904,11 +968,13 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_ur
         return  # blokir TTS dan overlay untuk komentar ini
 
     # Broadcast ke OBS chat overlay
+    # Konversi TikTok emote shortcode ([thumb], [heart], dll) → emoji unicode
+    display_text = _convert_tiktok_emotes(comment)
     _broadcast("tiktok_chat", {
         "user": nickname,
         "user_id": user_id,
         "avatar": avatar_url,
-        "text": comment,
+        "text": display_text,
         "time": _now(),
         "type": "chat",
     })
@@ -1037,11 +1103,89 @@ def _start_tiktok_listener():
                     print(f"[TikTok] Disconnected from @{username}")
                     _broadcast("tiktok_status", {"connected": False, "username": username})
 
+                def _read_user_info_raw(user_info):
+                    """
+                    Read uid + nick directly from a raw betterproto User object,
+                    bypassing ExtendedUser which crashes when proto fields are camelCase.
+                    Uses __dict__ / to_dict() so we get whatever keys actually exist.
+                    """
+                    if user_info is None:
+                        return "", ""
+                    # to_dict() returns the raw proto dict with original field names
+                    try:
+                        d = user_info.to_dict()
+                    except Exception:
+                        d = {}
+                    uid  = str(d.get('uniqueId') or d.get('unique_id') or
+                               getattr(user_info, 'unique_id', None) or
+                               getattr(user_info, 'uniqueId', None) or "").strip()
+                    nick = str(d.get('nickName') or d.get('nick_name') or d.get('nickname') or
+                               getattr(user_info, 'nick_name', None) or
+                               getattr(user_info, 'nickName', None) or
+                               getattr(user_info, 'nickname', None) or "").strip()
+                    return uid, nick
+
+                def _get_avatar_from_user_info(user_info):
+                    """Extract avatar URL directly from raw proto user_info via to_dict()."""
+                    if user_info is None:
+                        return ""
+                    try:
+                        d = user_info.to_dict()
+                    except Exception:
+                        d = {}
+                    # avatarThumb / avatar_thumb is a dict like {"urlList": [...]}
+                    for key in ('avatarThumb', 'avatar_thumb', 'avatarMedium', 'avatar_medium'):
+                        av = d.get(key)
+                        if av and isinstance(av, dict):
+                            urls = av.get('urlList') or av.get('url_list') or []
+                            if urls:
+                                return str(urls[0])
+                    # Also try getattr directly on the proto object
+                    for attr in ('avatar_thumb', 'avatarThumb', 'avatar_medium', 'avatarMedium'):
+                        av = getattr(user_info, attr, None)
+                        if av:
+                            if hasattr(av, 'url_list') and av.url_list:
+                                return str(av.url_list[0])
+                            if hasattr(av, 'm_urls') and av.m_urls:
+                                return str(av.m_urls[0])
+                    return ""
+
+                def _safe_get_user(event):
+                    """
+                    Safely extract (uid, nick) from a TikTokLive event.
+                    First try event.user normally. If that raises TypeError (camelCase
+                    proto field mismatch in ExtendedUser), fall back to reading
+                    event.user_info raw via to_dict() which preserves original keys.
+                    """
+                    # ── First: try event.user the normal way ──
+                    try:
+                        u    = event.user
+                        uid  = str(u.unique_id or "").strip()
+                        nick = str(getattr(u, 'nickname', None) or getattr(u, 'nick_name', None) or uid).strip()
+                        if uid:
+                            return uid, nick or uid
+                    except TypeError:
+                        # ExtendedUser.__init__ got unexpected keyword argument (camelCase mismatch)
+                        pass
+                    except Exception:
+                        pass
+
+                    # ── Fallback: read user_info raw proto directly ──
+                    user_info = getattr(event, 'user_info', None)
+                    uid, nick = _read_user_info_raw(user_info)
+                    if uid:
+                        return uid, nick or uid
+
+                    return "unknown", "unknown"
+
                 def _get_avatar(u):
                     """
                     Extract a plain URL string from TikTokLive user avatar.
                     Handles: ImageModel (m_urls / url_list), plain string, None.
+                    Also accepts raw user_info proto objects.
                     """
+                    if u is None:
+                        return ""
                     # Try known attribute names in order of preference
                     av = (getattr(u, 'avatar_thumb', None) or
                           getattr(u, 'avatar_medium', None) or
@@ -1061,6 +1205,21 @@ def _start_tiktok_listener():
                         return s
                     return ""
 
+                def _get_avatar_safe(event):
+                    """Get avatar from event. Falls back to raw user_info proto if event.user crashes."""
+                    try:
+                        av = _get_avatar(event.user)
+                        if av:
+                            return av
+                    except TypeError:
+                        # ExtendedUser camelCase mismatch – read raw proto instead
+                        pass
+                    except Exception:
+                        pass
+                    user_info = getattr(event, 'user_info', None)
+                    return _get_avatar_from_user_info(user_info)
+               
+
                 @client.on(CommentEvent)
                 async def on_comment(event: CommentEvent):
                     if time.time() < _tiktok_ready_at:
@@ -1074,12 +1233,12 @@ def _start_tiktok_listener():
                         None, _process_tiktok_comment, uid, nick, text, avatar
                     )
 
+
                 @client.on(GiftEvent)
                 async def on_gift(event: GiftEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         gname  = (getattr(event, 'gift_name', None)
                                   or (getattr(event.gift, 'name', 'Gift') if hasattr(event, 'gift') else 'Gift'))
                         gcount = getattr(event, 'repeat_count', 1) or 1
@@ -1091,9 +1250,8 @@ def _start_tiktok_listener():
                 @client.on(LikeEvent)
                 async def on_like(event: LikeEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         count  = getattr(event, 'count', 1) or 1
                         _broadcast("tiktok_chat", {"type":"like","user":nick,"user_id":uid,
                             "avatar":avatar,"detail":f"mengirim {count} like","time":_now()})
@@ -1103,9 +1261,8 @@ def _start_tiktok_listener():
                 @client.on(FollowEvent)
                 async def on_follow(event: FollowEvent):
                     try:
-                        nick   = event.user.nickname or str(event.user.unique_id)
-                        uid    = str(event.user.unique_id)
-                        avatar = _get_avatar(event.user)
+                        uid, nick = _safe_get_user(event)
+                        avatar = _get_avatar_safe(event)
                         _broadcast("tiktok_chat", {"type":"follow","user":nick,"user_id":uid,
                             "avatar":avatar,"detail":"mengikuti akun","time":_now()})
                     except Exception as e:
