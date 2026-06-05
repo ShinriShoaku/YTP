@@ -65,6 +65,30 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
 .spin{display:inline-block;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── Volume Card ── */
+.vol-card{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #374151}
+.vol-header{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#f97316;margin-bottom:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.vol-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:540px){.vol-grid{grid-template-columns:1fr}}
+.vol-item{background:#111827;border-radius:10px;padding:14px 16px;border:1px solid #374151;transition:border-color .2s}
+.vol-item:hover{border-color:#4b5563}
+.vol-item-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.vol-icon-label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#e5e7eb}
+.vol-icon{font-size:18px;line-height:1}
+.vol-value-badge{font-size:14px;font-weight:700;color:#f97316;min-width:40px;text-align:right;font-variant-numeric:tabular-nums}
+.vol-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;outline:none;cursor:pointer;background:linear-gradient(to right,#f97316 var(--pct,100%),#374151 var(--pct,100%));transition:background .05s}
+.vol-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:50%;background:#f97316;cursor:pointer;border:2px solid #111827;box-shadow:0 0 0 3px #f9731633;transition:box-shadow .15s,transform .15s}
+.vol-slider::-webkit-slider-thumb:hover{box-shadow:0 0 0 6px #f9731633;transform:scale(1.1)}
+.vol-slider::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#f97316;cursor:pointer;border:2px solid #111827;box-shadow:0 0 0 3px #f9731633}
+.vol-tts .vol-slider{background:linear-gradient(to right,#a855f7 var(--pct,50%),#374151 var(--pct,50%))}
+.vol-tts .vol-slider::-webkit-slider-thumb{background:#a855f7;box-shadow:0 0 0 3px #a855f733}
+.vol-tts .vol-slider::-webkit-slider-thumb:hover{box-shadow:0 0 0 6px #a855f733}
+.vol-tts .vol-value-badge{color:#a855f7}
+.vol-sub{font-size:10px;color:#6b7280;margin-top:8px;display:flex;justify-content:space-between}
+.vol-mute-btn{font-size:11px;padding:2px 8px;background:none;border:1px solid #374151;border-radius:5px;color:#9ca3af;cursor:pointer;transition:all .15s;margin-left:8px;flex-shrink:0}
+.vol-mute-btn:hover{border-color:#ef4444;color:#ef4444}
+.vol-mute-btn.muted{background:#7f1d1d55;border-color:#ef4444;color:#fca5a5}
+
 /* ── Settings tab ── */
 .cfg-section{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #374151}
 .cfg-section-title{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#f97316;margin-bottom:14px;font-weight:700}
@@ -111,11 +135,6 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
 
   <!-- ══════════════ PLAYER TAB ══════════════ -->
   <div id="tab-player" class="tab-panel active">
-    <div class="search-row">
-      <input id="q" type="text" placeholder="Search YouTube music…" onkeydown="if(event.key==='Enter') doSearch()">
-      <button class="btn btn-primary" onclick="doSearch()">Search</button>
-    </div>
-    <div id="results" class="results-section"></div>
     <div class="player-card">
       <div class="player-header">▶ Now Playing</div>
       <div id="nowTitle" class="now-title">— nothing playing —</div>
@@ -126,6 +145,39 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
       </div>
       <div class="player-status" id="playerStatus">Idle</div>
     </div>
+    <!-- ══ Volume Control Card ══ -->
+    <div class="vol-card">
+      <div class="vol-header">🎚 Volume Control</div>
+      <div class="vol-grid">
+        <!-- Music Volume -->
+        <div class="vol-item vol-music">
+          <div class="vol-item-header">
+            <div class="vol-icon-label">
+              <span class="vol-icon">🎵</span>
+              <span>Music</span>
+              <button class="vol-mute-btn" id="musicMuteBtn" onclick="toggleMuteMusic()">Mute</button>
+            </div>
+            <span class="vol-value-badge" id="musicVolLabel">100%</span>
+          </div>
+          <input type="range" class="vol-slider" id="musicVolSlider" min="0" max="150" value="100" step="1" oninput="onMusicVolInput(this.value)" onchange="applyVolume()">
+          <div class="vol-sub"><span>0%</span><span style="color:#9ca3af">max 150%</span><span>150%</span></div>
+        </div>
+        <!-- TTS Volume -->
+        <div class="vol-item vol-tts">
+          <div class="vol-item-header">
+            <div class="vol-icon-label">
+              <span class="vol-icon">🔊</span>
+              <span>TTS</span>
+              <button class="vol-mute-btn" id="ttsMuteBtn" onclick="toggleMuteTTS()">Mute</button>
+            </div>
+            <span class="vol-value-badge" id="ttsVolLabel">+0%</span>
+          </div>
+          <input type="range" class="vol-slider" id="ttsVolSlider" min="-50" max="100" value="0" step="1" oninput="onTTSVolInput(this.value)" onchange="applyVolume()">
+          <div class="vol-sub"><span>-50%</span><span style="color:#9ca3af">edge-tts</span><span>+100%</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- ══ / Volume Control Card ══ -->
     <div class="queue-card">
       <div class="queue-header">
         <div class="queue-title">📋 Queue &nbsp;<span id="qCount" style="color:#f97316">0</span></div>
@@ -137,6 +189,11 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
       <div id="qList"><div class="queue-empty">Queue is empty</div></div>
     </div>
     <div class="status" id="status">Ready</div>
+    <div class="search-row" style="margin-top:20px">
+      <input id="q" type="text" placeholder="Search YouTube music…" onkeydown="if(event.key==='Enter') doSearch()">
+      <button class="btn btn-primary" onclick="doSearch()">Search</button>
+    </div>
+    <div id="results" class="results-section"></div>
   </div>
 
   <!-- ══════════════ SETTINGS TAB ══════════════ -->
@@ -964,12 +1021,108 @@ function showFilterToast(msg, ok){
   t._to = setTimeout(()=>{ t.className='cfg-toast'; }, 3500);
 }
 
+// ── Volume Control ─────────────────────────────────────────────
+let _volDebounce = null;
+let _musicMuted = false, _musicMuteSave = 100;
+let _ttsMuted = false,   _ttsMuteSave   = 0;
+
+function _updateSliderFill(sliderId, min, max){
+  const s = document.getElementById(sliderId);
+  if(!s) return;
+  const pct = ((parseFloat(s.value) - min) / (max - min) * 100).toFixed(1);
+  s.style.setProperty('--pct', pct + '%');
+}
+
+function onMusicVolInput(v){
+  _musicMuted = false;
+  const btn = document.getElementById('musicMuteBtn');
+  if(btn) btn.classList.remove('muted');
+  document.getElementById('musicVolLabel').textContent = v + '%';
+  _updateSliderFill('musicVolSlider', 0, 150);
+  clearTimeout(_volDebounce);
+  _volDebounce = setTimeout(applyVolume, 300);
+}
+
+function onTTSVolInput(v){
+  _ttsMuted = false;
+  const btn = document.getElementById('ttsMuteBtn');
+  if(btn) btn.classList.remove('muted');
+  const n = parseInt(v);
+  document.getElementById('ttsVolLabel').textContent = (n >= 0 ? '+' : '') + n + '%';
+  _updateSliderFill('ttsVolSlider', -50, 100);
+  clearTimeout(_volDebounce);
+  _volDebounce = setTimeout(applyVolume, 300);
+}
+
+function toggleMuteMusic(){
+  const s = document.getElementById('musicVolSlider');
+  const btn = document.getElementById('musicMuteBtn');
+  if(!_musicMuted){
+    _musicMuteSave = parseInt(s.value);
+    s.value = 0;
+    _musicMuted = true;
+    btn.classList.add('muted');
+    btn.textContent = 'Unmute';
+    document.getElementById('musicVolLabel').textContent = '0%';
+    _updateSliderFill('musicVolSlider', 0, 150);
+  } else {
+    s.value = _musicMuteSave;
+    _musicMuted = false;
+    btn.classList.remove('muted');
+    btn.textContent = 'Mute';
+    document.getElementById('musicVolLabel').textContent = _musicMuteSave + '%';
+    _updateSliderFill('musicVolSlider', 0, 150);
+  }
+  applyVolume();
+}
+
+function toggleMuteTTS(){
+  const s = document.getElementById('ttsVolSlider');
+  const btn = document.getElementById('ttsMuteBtn');
+  if(!_ttsMuted){
+    _ttsMuteSave = parseInt(s.value);
+    s.value = -50;
+    _ttsMuted = true;
+    btn.classList.add('muted');
+    btn.textContent = 'Unmute';
+    document.getElementById('ttsVolLabel').textContent = '-50%';
+    _updateSliderFill('ttsVolSlider', -50, 100);
+  } else {
+    s.value = _ttsMuteSave;
+    _ttsMuted = false;
+    btn.classList.remove('muted');
+    btn.textContent = 'Mute';
+    const n = _ttsMuteSave;
+    document.getElementById('ttsVolLabel').textContent = (n >= 0 ? '+' : '') + n + '%';
+    _updateSliderFill('ttsVolSlider', -50, 100);
+  }
+  applyVolume();
+}
+
+async function applyVolume(){
+  const music = parseInt(document.getElementById('musicVolSlider').value);
+  const tts   = parseInt(document.getElementById('ttsVolSlider').value);
+  try{ await api('POST','/player/volume',{music, tts}); }
+  catch(e){ console.warn('Volume set failed:',e.message); }
+}
+
+async function loadVolume(){
+  try{
+    const d = await api('GET','/player/volume');
+    const ms = document.getElementById('musicVolSlider');
+    const ts = document.getElementById('ttsVolSlider');
+    if(ms){ ms.value = d.music ?? 100; _updateSliderFill('musicVolSlider',0,150); document.getElementById('musicVolLabel').textContent = (d.music??100)+'%'; }
+    if(ts){ const t = d.tts ?? 0; ts.value = t; _updateSliderFill('ttsVolSlider',-50,100); document.getElementById('ttsVolLabel').textContent = (t>=0?'+':'')+t+'%'; }
+  }catch(_){}
+}
+
 // ── Init ───────────────────────────────────────────────────────
 syncColor('cfg-ov_accent_color','cfg-ov_accent_color_text');
 syncColor('cfg-ov_accent_color2','cfg-ov_accent_color2_text');
 
 syncPlayerState();
 setInterval(syncPlayerState,3000);
+loadVolume();
 
 // ── TikTok Studio — Hosts Helper ──────────────────────────────
 const TS_HOSTNAME = 'kanaeplayerlive.id';

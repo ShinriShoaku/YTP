@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920,height=1080" />
+<title>OBS Subtitle — CYBER</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+:root{
+  --c-green:#00ff9d;
+  --c-cyan:#00e5ff;
+  --c-yellow:#ffe600;
+  --c-dim:rgba(0,255,157,0.18);
+  --c-bg:rgba(2,8,12,0.92);
+  --sub-size:32px;
+  --sub-width:1560px;
+}
+
+html,body{
+  width:1920px;height:1080px;overflow:hidden;
+  background:transparent;
+  font-family:'Share Tech Mono',monospace;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── SCANLINE overlay on whole page ── */
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:99999;
+  background:repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.18) 0px,
+    rgba(0,0,0,0.18) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* ── WRAP ── */
+#subtitle-wrap{
+  position:fixed;
+  bottom:70px;left:50%;
+  transform:translateX(-50%);
+  width:min(var(--sub-width),94vw);
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  z-index:9000;pointer-events:none;
+}
+#subtitle-wrap.hidden{display:none!important;}
+
+/* ── OUTER FRAME ── */
+#sub-frame{
+  position:relative;width:100%;
+  padding:2px;
+  background:linear-gradient(90deg,var(--c-green),var(--c-cyan),var(--c-green));
+  clip-path:polygon(0 0,calc(100% - 22px) 0,100% 22px,100% 100%,22px 100%,0 calc(100% - 22px));
+  filter:drop-shadow(0 0 8px var(--c-green)) drop-shadow(0 0 24px rgba(0,255,157,0.35));
+}
+
+/* ── INNER BOX ── */
+#sub-pill{
+  position:relative;
+  padding:16px 44px 18px;
+  background:var(--c-bg);
+  clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,20px 100%,0 calc(100% - 20px));
+  overflow:hidden;
+  min-height:64px;
+}
+
+/* corner brackets */
+#sub-pill::before,#sub-pill::after{
+  content:'';position:absolute;width:20px;height:20px;
+  border-color:var(--c-cyan);border-style:solid;
+}
+#sub-pill::before{top:6px;left:6px;border-width:2px 0 0 2px;}
+#sub-pill::after{bottom:6px;right:6px;border-width:0 2px 2px 0;}
+
+/* scan sweep */
+#sub-pill .sweep{
+  position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,
+    transparent 0%,rgba(0,255,157,0.04) 50%,transparent 100%
+  );
+  animation:sweep 3s linear infinite;
+}
+@keyframes sweep{
+  0%{transform:translateY(-100%);}
+  100%{transform:translateY(100%);}
+}
+
+/* ── LABEL ── */
+#sub-label{
+  position:absolute;top:0;left:36px;
+  font-family:'Orbitron',monospace;
+  font-size:8px;font-weight:700;letter-spacing:3px;
+  text-transform:uppercase;
+  color:var(--c-cyan);
+  background:var(--c-bg);
+  padding:0 6px;
+  transform:translateY(-50%);
+  opacity:0.75;
+}
+
+/* ── TEXT ── */
+#sub-text{
+  position:relative;z-index:2;
+  width:100%;
+  font-family:'Share Tech Mono',monospace;
+  font-size:var(--sub-size);
+  font-weight:400;
+  line-height:1.5;
+  letter-spacing:1.5px;
+  text-align:center;
+  color:var(--c-green);
+  text-shadow:0 0 10px var(--c-green),0 0 30px rgba(0,255,157,0.4);
+  white-space:normal;overflow-wrap:break-word;word-break:break-word;
+}
+
+/* karaoke words */
+.sw{
+  display:inline;
+  color:rgba(0,255,157,0.3);
+  transition:color .06s,text-shadow .06s;
+}
+.sw.done{color:rgba(0,255,157,0.2);}
+.sw.active{
+  color:#ffffff;
+  text-shadow:0 0 8px var(--c-cyan),0 0 20px var(--c-cyan),0 0 50px rgba(0,229,255,0.5);
+  animation:glitchWord .14s steps(2) both;
+}
+#sub-text.plain .sw{
+  color:var(--c-green);
+  text-shadow:0 0 10px var(--c-green);
+}
+
+@keyframes glitchWord{
+  0%{clip-path:inset(40% 0 40% 0);transform:translateX(-3px);}
+  33%{clip-path:inset(0% 0 60% 0);transform:translateX(3px);}
+  66%{clip-path:inset(60% 0 0% 0);transform:translateX(0);}
+  100%{clip-path:none;transform:none;}
+}
+
+/* ── PROGRESS ── */
+#sub-progress{
+  position:relative;width:min(800px,75%);height:2px;
+  background:rgba(0,255,157,0.1);
+  overflow:visible;
+}
+#sub-progress.hidden{display:none;}
+#sub-progress::before{
+  content:'';position:absolute;top:-2px;left:0;width:6px;height:6px;
+  background:var(--c-green);border-radius:50%;
+  box-shadow:0 0 8px var(--c-green);
+  /* will be driven by JS */
+}
+#sub-progress-bar{
+  height:100%;
+  background:linear-gradient(90deg,var(--c-green),var(--c-cyan));
+  box-shadow:0 0 8px var(--c-cyan);
+  width:0%;
+}
+
+/* ── HINT ── */
+#sub-hint{
+  font-size:10px;letter-spacing:2px;
+  color:rgba(0,229,255,0.5);
+  text-transform:uppercase;
+  display:none;
+}
+#sub-hint.visible{display:block;}
+
+/* ── ENTER / EXIT ── */
+@keyframes frameIn{
+  0%{opacity:0;clip-path:inset(100% 0 0 0);}
+  60%{opacity:1;clip-path:inset(0% 0 5% 0);}
+  100%{clip-path:inset(0%);}
+}
+@keyframes frameOut{
+  0%{opacity:1;filter:brightness(1);}
+  50%{opacity:.6;filter:brightness(3) blur(2px);}
+  100%{opacity:0;filter:brightness(0);}
+}
+#sub-frame.entering{animation:frameIn .35s ease both;}
+#sub-frame.leaving{animation:frameOut .22s ease both;}
+</style>
+</head>
+<body>
+<div id="subtitle-wrap" class="hidden">
+  <div id="sub-frame">
+    <div id="sub-pill">
+      <div class="sweep"></div>
+      <div id="sub-label">◈ SUBTITLE FEED</div>
+      <div id="sub-text"></div>
+    </div>
+  </div>
+  <div id="sub-progress" class="hidden"><div id="sub-progress-bar"></div></div>
+  <div id="sub-hint"></div>
+</div>
+
+<script>
+const API='http://localhost:8000';
+let cfg={},visible=false,hideTimer=null,karaokeTimers=[];
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function applyConfig(c){
+  cfg=c||{};
+  document.documentElement.style.setProperty('--c-green',c.accent_color||'#00ff9d');
+  document.documentElement.style.setProperty('--c-cyan',c.accent_color2||'#00e5ff');
+  document.documentElement.style.setProperty('--sub-size',(c.subtitle_font_size||32)+'px');
+  if(c.show_subtitle===false){clearSubtitle(true);document.getElementById('subtitle-wrap').classList.add('hidden');}
+}
+
+function showSubtitle(text,words,durationMs,songHint){
+  if(cfg.show_subtitle===false)return;
+  if(!text||!text.trim())return;
+  clearAllTimers();
+  const wrap=document.getElementById('subtitle-wrap');
+  const frame=document.getElementById('sub-frame');
+  const textEl=document.getElementById('sub-text');
+  const hintEl=document.getElementById('sub-hint');
+  const prog=document.getElementById('sub-progress');
+  const progBar=document.getElementById('sub-progress-bar');
+
+  if(songHint){hintEl.textContent='▸ '+songHint;hintEl.classList.add('visible');}
+  else hintEl.classList.remove('visible');
+
+  const render=()=>{
+    if(words&&Array.isArray(words)&&words.length>0){
+      textEl.className='';
+      textEl.innerHTML=words.map((w,i)=>`<span class="sw" id="sw${i}">${esc(w.word)}</span>`).join(' ');
+      words.forEach((w,i)=>{
+        if(w.start==null)return;
+        const t1=setTimeout(()=>{
+          document.getElementById(`sw${i}`)?.classList.add('active');
+          if(i>0){const p=document.getElementById(`sw${i-1}`);if(p){p.classList.remove('active');p.classList.add('done');}}
+        },w.start*1000);
+        karaokeTimers.push(t1);
+        if(w.end!=null){
+          const t2=setTimeout(()=>{const el=document.getElementById(`sw${i}`);if(el){el.classList.remove('active');el.classList.add('done');}},w.end*1000);
+          karaokeTimers.push(t2);
+        }
+      });
+    }else{
+      textEl.className='plain';
+      textEl.innerHTML=text.split(' ').map(w=>`<span class="sw active">${esc(w)}</span>`).join(' ');
+    }
+    if(durationMs>0){
+      prog.classList.remove('hidden');
+      progBar.style.transition='none';progBar.style.width='0%';
+      void progBar.offsetWidth;
+      progBar.style.transition=`width ${durationMs}ms linear`;
+      progBar.style.width='100%';
+    }else prog.classList.add('hidden');
+    wrap.classList.remove('hidden');
+    frame.classList.remove('entering','leaving');
+    void frame.offsetWidth;
+    frame.classList.add('entering');
+    frame.addEventListener('animationend',()=>frame.classList.remove('entering'),{once:true});
+    visible=true;
+    hideTimer=setTimeout(()=>clearSubtitle(false),durationMs||4500);
+  };
+
+  if(visible){
+    frame.classList.remove('entering');frame.classList.add('leaving');
+    frame.addEventListener('animationend',()=>{frame.classList.remove('leaving');visible=false;render();},{once:true});
+  }else render();
+}
+
+function clearAllTimers(){if(hideTimer){clearTimeout(hideTimer);hideTimer=null;}karaokeTimers.forEach(t=>clearTimeout(t));karaokeTimers=[];}
+function clearSubtitle(instant){
+  clearAllTimers();
+  const wrap=document.getElementById('subtitle-wrap');
+  const frame=document.getElementById('sub-frame');
+  document.getElementById('sub-progress-bar').style.width='0%';
+  if(instant||!visible){wrap.classList.add('hidden');frame.classList.remove('entering','leaving');visible=false;return;}
+  frame.classList.remove('entering');frame.classList.add('leaving');
+  frame.addEventListener('animationend',()=>{wrap.classList.add('hidden');frame.classList.remove('leaving');visible=false;},{once:true});
+}
+
+function connectSSE(){
+  const es=new EventSource(`${API}/overlay/events`);
+  es.addEventListener('subtitle',e=>{const d=JSON.parse(e.data);showSubtitle(d.text,d.words||null,d.duration_ms||4500,d.song_hint||null);});
+  es.addEventListener('subtitle_clear',()=>clearSubtitle(false));
+  es.addEventListener('player_stopped',()=>clearSubtitle(false));
+  es.addEventListener('overlay_config',e=>applyConfig(JSON.parse(e.data)));
+  es.onerror=()=>{es.close();setTimeout(connectSSE,5000);};
+}
+async function init(){
+  try{const r=await fetch(`${API}/overlay/config`);if(r.ok)applyConfig(await r.json());}catch(_){}
+  connectSSE();
+}
+init();
+</script>
+</body>
+</html>
