@@ -33,8 +33,8 @@ from datetime import datetime, timezone
 #  Version / Update Check
 # ─────────────────────────────────────────────────────────────
 
-APP_VERSION_CODE = 5          # bump this each release
-APP_VERSION_NAME = "5.1.0"   # human-readable version  (major.minor.patch)
+APP_VERSION_CODE = 6          # bump this each release
+APP_VERSION_NAME = "6.0.0"   # human-readable version  (major.minor.patch)
 
 VERSION_JSON_URL = (
     "https://raw.githubusercontent.com/ShinriShoaku/YTP/main/version.json"
@@ -2653,6 +2653,56 @@ async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
     return FastAPIResponse(content=data, media_type=ct,
                            headers={"Cache-Control":"public,max-age=3600",
                                     "Access-Control-Allow-Origin":"*"})
+
+# ─────────────────────────────────────────────────────────────
+#  Feedback  (forward to Google Sheets via Apps Script)
+# ─────────────────────────────────────────────────────────────
+
+FEEDBACK_SHEET_URL = "https://script.google.com/macros/s/AKfycbwVs6bpXUpc5xkxt3mpXykKmMTkze89_3iL4cU4VSzlJ8el0xEi0u_Mi7OJoi-U-ZcjQQ/exec"
+
+class FeedbackRequest(BaseModel):
+    username: str
+    feedback: str
+    type: Optional[str] = "feedback"   # "feedback" | "bug" | "suggestion"
+
+@app.post("/feedback", tags=["system"])
+def submit_feedback(body: FeedbackRequest):
+    """
+    Forward user feedback/bug report to Google Sheets via Apps Script.
+    Payload: { username, feedback, type }
+    """
+    import urllib.request as _req
+    import urllib.error as _err
+
+    if not body.username.strip():
+        raise HTTPException(400, detail="Username tidak boleh kosong.")
+    if not body.feedback.strip():
+        raise HTTPException(400, detail="Pesan feedback tidak boleh kosong.")
+
+    payload = json.dumps({
+        "username": body.username.strip(),
+        "feedback": body.feedback.strip(),
+        "type":     body.type or "feedback",
+        "version":  APP_VERSION_NAME,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }).encode("utf-8")
+
+    try:
+        request = _req.Request(
+            FEEDBACK_SHEET_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _req.urlopen(request, timeout=10) as resp:
+            result = resp.read().decode("utf-8")
+        print(f"[Feedback] Terkirim dari '{body.username}' — {result[:80]}")
+        return {"message": "Feedback berhasil dikirim! Terima kasih 🙏"}
+    except _err.HTTPError as e:
+        raise HTTPException(502, detail=f"Google Sheets error: {e.code} {e.reason}")
+    except Exception as e:
+        raise HTTPException(502, detail=f"Gagal mengirim feedback: {e}")
+
 
 # ─────────────────────────────────────────────────────────────
 #  Version / Update Info  (client-facing endpoint)

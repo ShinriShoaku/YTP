@@ -155,6 +155,7 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
     <div class="tab" onclick="switchTab('settings')">⚙ Settings</div>
     <div class="tab" onclick="switchTab('filter')">🚫 Filter</div>
     <div class="tab" onclick="switchTab('tiktokstudio')">🎬 TikTok Studio</div>
+    <div class="tab" onclick="switchTab('feedback')">💬 Feedback</div>
   </div>
 
   <!-- ══════════════ PLAYER TAB ══════════════ -->
@@ -542,6 +543,61 @@ h1{text-align:center;color:#f97316;margin-bottom:20px;font-size:1.6rem;letter-sp
 
   </div><!-- /tiktokstudio -->
 
+  <!-- ══════════════ FEEDBACK TAB ══════════════ -->
+  <div id="tab-feedback" class="tab-panel">
+    <div class="cfg-section">
+      <div class="cfg-section-title">💬 Kirim Feedback / Bug Report</div>
+      <p style="font-size:13px;color:#9ca3af;margin-bottom:16px;line-height:1.6">
+        Temukan bug? Punya saran atau masukan? Isi form di bawah ini — feedback kamu langsung masuk ke spreadsheet kami. Terima kasih sudah membantu!
+      </p>
+
+      <!-- Type selector -->
+      <div class="cfg-row">
+        <span class="cfg-label">Tipe<small>pilih kategori</small></span>
+        <select class="cfg-select" id="fb-type" style="max-width:200px">
+          <option value="feedback">💬 Feedback</option>
+          <option value="bug">🐛 Bug Report</option>
+          <option value="suggestion">💡 Saran / Fitur</option>
+        </select>
+      </div>
+
+      <!-- Username -->
+      <div class="cfg-row">
+        <span class="cfg-label">Username<small>nama kamu / TikTok @</small></span>
+        <input class="cfg-input" id="fb-username" type="text" placeholder="nama_kamu" maxlength="80">
+      </div>
+
+      <!-- Message -->
+      <div class="cfg-row" style="align-items:flex-start">
+        <span class="cfg-label" style="padding-top:6px">Pesan<small>detail feedback / bug</small></span>
+        <textarea id="fb-message" maxlength="1000"
+          style="flex:1;min-width:140px;padding:8px 10px;border-radius:6px;border:1px solid #374151;background:#111827;color:#e5e7eb;font-size:13px;outline:none;resize:vertical;min-height:110px;font-family:inherit;line-height:1.5"
+          placeholder="Ceritakan dengan detail apa yang terjadi, atau fitur apa yang kamu inginkan…"
+          oninput="document.getElementById('fb-charcount').textContent=this.value.length+'/1000'"
+          onfocus="this.style.borderColor='#f97316'" onblur="this.style.borderColor='#374151'"></textarea>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#6b7280;margin-top:-6px;margin-bottom:12px">
+        <span id="fb-charcount">0/1000</span>
+      </div>
+
+      <div class="cfg-save-row">
+        <button class="btn btn-primary" id="fb-submit-btn" onclick="submitFeedback()">📤 Kirim</button>
+        <button class="btn btn-secondary" onclick="resetFeedbackForm()">↺ Reset</button>
+        <span class="cfg-toast" id="fbToast"></span>
+      </div>
+    </div>
+
+    <!-- About -->
+    <div class="cfg-section" style="border-color:#1d2d1d">
+      <div class="cfg-section-title" style="color:#22c55e">ℹ️ Info</div>
+      <p style="font-size:12px;color:#9ca3af;line-height:1.7">
+        Feedback dikirim ke developer secara anonim melalui Google Sheets.<br>
+        Tidak ada data pribadi sensitif yang dikumpulkan selain username dan pesan yang kamu isi.<br>
+        Versi app akan disertakan secara otomatis untuk membantu debugging.
+      </p>
+    </div>
+  </div><!-- /feedback -->
+
 </div><!-- /app -->
 
 <script>
@@ -550,7 +606,7 @@ let queueData=[], shuffleOn=false, lastServerRunning=false;
 
 // ── Tab switching ──────────────────────────────────────────────
 function switchTab(name){
-  const panels=['player','settings','filter','tiktokstudio'];
+  const panels=['player','settings','filter','tiktokstudio','feedback'];
   document.querySelectorAll('.tab').forEach((t,i)=>{
     t.classList.toggle('active', panels[i]===name);
   });
@@ -1256,6 +1312,47 @@ function tsRunScript(mode){
 
 // Init TikTok Studio links on load (in case someone lands on this tab via direct #hash)
 tsRenderLinks();
+
+// ── Feedback ───────────────────────────────────────────────────
+async function submitFeedback(){
+  const username = (document.getElementById('fb-username').value||'').trim();
+  const message  = (document.getElementById('fb-message').value||'').trim();
+  const type     = document.getElementById('fb-type').value || 'feedback';
+  const btn      = document.getElementById('fb-submit-btn');
+
+  if(!username){ showFbToast('⚠ Username tidak boleh kosong', false); return; }
+  if(!message)  { showFbToast('⚠ Pesan tidak boleh kosong', false); return; }
+  if(message.length < 5){ showFbToast('⚠ Pesan terlalu pendek', false); return; }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Mengirim…';
+  try{
+    const data = await api('POST', '/feedback', { username, feedback: message, type });
+    showFbToast('✓ ' + (data.message || 'Terkirim!'), true);
+    // Reset form after success
+    setTimeout(resetFeedbackForm, 1500);
+  } catch(e){
+    showFbToast('❌ Gagal: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 Kirim';
+  }
+}
+
+function resetFeedbackForm(){
+  document.getElementById('fb-username').value = '';
+  document.getElementById('fb-message').value  = '';
+  document.getElementById('fb-type').value     = 'feedback';
+  document.getElementById('fb-charcount').textContent = '0/1000';
+}
+
+function showFbToast(msg, ok){
+  const t = document.getElementById('fbToast');
+  t.textContent = msg;
+  t.className = 'cfg-toast ' + (ok ? 'ok' : 'err');
+  clearTimeout(t._to);
+  t._to = setTimeout(()=>{ t.className='cfg-toast'; }, 4000);
+}
 
 </script>
 </body>
