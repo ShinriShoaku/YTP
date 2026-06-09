@@ -30,6 +30,90 @@ import traceback
 from datetime import datetime, timezone
 
 # ─────────────────────────────────────────────────────────────
+#  Version / Update Check
+# ─────────────────────────────────────────────────────────────
+
+APP_VERSION_CODE = 6          # bump this each release
+APP_VERSION_NAME = "6.0.0"   # human-readable version  (major.minor.patch)
+
+VERSION_JSON_URL = (
+    "https://raw.githubusercontent.com/ShinriShoaku/YTP/main/version.json"
+)
+
+_update_info: dict = {}   # filled once at startup; exposed via /version endpoint
+
+
+def _parse_version(v: str):
+    """
+    Parse a semver-style string like '5.1.0' into a comparable tuple of ints.
+    Non-numeric segments default to 0.  e.g. '5.1.0' → (5, 1, 0)
+    """
+    parts = []
+    for seg in str(v).strip().split("."):
+        try:
+            parts.append(int(seg))
+        except ValueError:
+            parts.append(0)
+    # Normalise to at least 3 parts so (5,) < (5,1) comparisons work correctly
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _check_for_update() -> dict:
+    """
+    Fetch version.json from GitHub and decide whether an update is available.
+
+    Update logic (either condition triggers):
+      1. latest versionCode  > current APP_VERSION_CODE   (major releases)
+      2. latest versionName  > current APP_VERSION_NAME   (semver comparison –
+         catches patch / hotfix releases even when versionCode stays the same)
+
+    Returns a dict exposed via GET /version.
+    Silently ignores network / parse errors.
+    """
+    global _update_info
+    try:
+        req = urllib.request.Request(
+            VERSION_JSON_URL,
+            headers={"User-Agent": "YTPlayer-UpdateChecker/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        latest_code = int(data.get("versionCode", 0))
+        latest_name = str(data.get("versionName", "?"))
+        message     = str(data.get("updateMessage", ""))
+
+        # Compare by versionCode OR semver versionName – whichever is higher
+        ver_cur = _parse_version(APP_VERSION_NAME)
+        ver_lat = _parse_version(latest_name)
+        available = (latest_code > APP_VERSION_CODE) or (ver_lat > ver_cur)
+        print(f"[Update-debug] lokal={APP_VERSION_NAME}{list(ver_cur)} github={latest_name}{list(ver_lat)} available={available}")
+
+        _update_info = {
+            "current_version_code": APP_VERSION_CODE,
+            "current_version_name": APP_VERSION_NAME,
+            "latest_version_code":  latest_code,
+            "latest_version_name":  latest_name,
+            "update_message":       message,
+            "update_available":     available,
+        }
+        return _update_info
+    except Exception as e:
+        _update_info = {
+            "current_version_code": APP_VERSION_CODE,
+            "current_version_name": APP_VERSION_NAME,
+            "latest_version_code":  APP_VERSION_CODE,
+            "latest_version_name":  APP_VERSION_NAME,
+            "update_message":       "",
+            "update_available":     False,
+            "error":                str(e),
+        }
+        return _update_info
+
+
+# ─────────────────────────────────────────────────────────────
 #  Platform Detection
 # ─────────────────────────────────────────────────────────────
 
@@ -64,6 +148,23 @@ async def lifespan(application: FastAPI):
 
     # TikTok is NOT started automatically – connect manually via the Web UI Settings tab.
     print("[TikTok] Auto-connect disabled. Use the Web UI Settings tab to connect manually.")
+
+    # ── Update check ───────────────────────────────────────────
+    _upd = _check_for_update()
+    if _upd.get("update_available"):
+        print("")
+        print("+" + "-"*53 + "+")
+        print(f"|  UPDATE TERSEDIA  v{_upd['latest_version_name']}  (kamu: v{_upd['current_version_name']})".ljust(54) + "|")
+        if _upd.get("update_message"):
+            print(f"|  {_upd['update_message'][:50]}".ljust(54) + "|")
+        print("|  https://github.com/ShinriShoaku/YTP              |")
+        print("+" + "-"*53 + "+")
+        print("")
+    elif "error" in _upd:
+        print(f"[Update] Cek versi gagal: {_upd['error']}")
+    else:
+        print(f"[Update] Versi kamu v{_upd['current_version_name']} — sudah up-to-date ✓ (latest: v{_upd['latest_version_name']})")
+
     yield
     # ── shutdown (nothing needed) ──────────────────────────────
 
@@ -863,6 +964,64 @@ _tiktok_thread = None            # reference to listener thread
 # Per-user request count (reset on each song change)
 _user_request_count: dict = {}
 
+_TIKTOK_EMOTES: dict = {
+    "[thumb]":       "👍", "[thumbsup]":    "👍", "[thumbsdown]":  "👎",
+    "[ok]":          "👌", "[clap]":        "👏", "[wave]":        "👋",
+    "[strong]":      "💪", "[victory]":     "✌️", "[handshake]":   "🤝",
+    "[point]":       "👉", "[raise]":       "🙋", "[pray]":        "🙏",
+    # Ekspresi wajah
+    "[smile]":       "😊", "[laugh]":       "😂", "[lol]":         "😂",
+    "[haha]":        "😄", "[cry]":         "😢", "[sad]":         "😢",
+    "[tear]":        "😭", "[angry]":       "😠", "[rage]":        "😡",
+    "[wow]":         "😮", "[surprised]":   "😮", "[shock]":       "😲",
+    "[cool]":        "😎", "[wink]":        "😉", "[blush]":       "😊",
+    "[kiss]":        "😘", "[love]":        "😍", "[yum]":         "😋",
+    "[think]":       "🤔", "[sleep]":       "😴", "[dizzy]":       "😵",
+    "[sick]":        "🤒", "[mask]":        "😷", "[nerd]":        "🤓",
+    "[sweat]":       "😅", "[nervous]":     "😬", "[fear]":        "😨",
+    "[scream]":      "😱", "[dead]":        "💀", "[skull]":       "💀",
+    "[ghost]":       "👻", "[alien]":       "👽", "[robot]":       "🤖",
+    # Hati
+    "[heart]":       "❤️", "[hearts]":      "❤️", "[like]":        "❤️",
+    "[redheart]":    "❤️", "[pinkheart]":   "🩷", "[orangeheart]": "🧡",
+    "[yellowheart]": "💛", "[greenheart]":  "💚", "[blueheart]":   "💙",
+    "[purpleheart]": "💜", "[blackheart]":  "🖤", "[brokenheart]": "💔",
+    "[heartbeat]":   "💓", "[sparkleheart]":"💖", "[revolving]":   "💞",
+    # Simbol & objek
+    "[fire]":        "🔥", "[star]":        "⭐", "[sparkles]":    "✨",
+    "[gift]":        "🎁", "[rose]":        "🌹", "[flower]":      "🌸",
+    "[money]":       "💰", "[coin]":        "🪙", "[crown]":       "👑",
+    "[gem]":         "💎", "[trophy]":      "🏆", "[medal]":       "🥇",
+    "[rocket]":      "🚀", "[bomb]":        "💣", "[lightning]":   "⚡",
+    "[rainbow]":     "🌈", "[sun]":         "☀️", "[moon]":        "🌙",
+    "[cloud]":       "☁️", "[snow]":        "❄️", "[umbrella]":    "☂️",
+    # Musik & hiburan
+    "[music]":       "🎵", "[mic]":         "🎤", "[guitar]":      "🎸",
+    "[dance]":       "💃", "[party]":       "🎉", "[confetti]":    "🎊",
+    "[cake]":        "🎂", "[balloon]":     "🎈", "[100]":         "💯",
+    # Makanan & minuman
+    "[pizza]":       "🍕", "[burger]":      "🍔", "[fries]":       "🍟",
+    "[coffee]":      "☕", "[boba]":        "🧋", "[beer]":        "🍺",
+    "[wine]":        "🍷", "[cake2]":       "🍰", "[icecream]":    "🍦",
+    # Hewan
+    "[cat]":         "🐱", "[dog]":         "🐶", "[bear]":        "🐻",
+    "[panda]":       "🐼", "[rabbit]":      "🐰", "[fox]":         "🦊",
+    "[lion]":        "🦁", "[tiger]":       "🐯", "[monkey]":      "🐵",
+    # Olahraga
+    "[soccer]":      "⚽", "[basketball]":  "🏀", "[football]":    "🏈",
+    "[gaming]":      "🎮", "[trophy2]":     "🏆",
+}
+
+def _convert_tiktok_emotes(text: str) -> str:
+    """
+    Konversi TikTok emote shortcode (mis. [thumb]) ke karakter emoji unicode.
+    Lookup O(1) per token, tidak ada regex kompleks.
+    """
+    import re
+    def _replace(m: "re.Match") -> str:
+        return _TIKTOK_EMOTES.get(m.group(0).lower(), m.group(0))
+    return re.sub(r'\[[^\]]{1,20}\]', _replace, text)
+
 
 def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_url: str = ""):
     """
@@ -988,11 +1147,14 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_ur
         return  # blokir TTS dan overlay untuk komentar ini
 
     # Broadcast ke OBS chat overlay
+    #Konversi Tiktok emote shortcode
+
+    display_text = _convert_tiktok_emotes(comment)
     _broadcast("tiktok_chat", {
         "user": nickname,
         "user_id": user_id,
         "avatar": avatar_url,
-        "text": comment,
+        "text": display_text,
         "time": _now(),
         "type": "chat",
     })
@@ -2552,6 +2714,72 @@ async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
     return FastAPIResponse(content=data, media_type=ct,
                            headers={"Cache-Control":"public,max-age=3600",
                                     "Access-Control-Allow-Origin":"*"})
+
+# ─────────────────────────────────────────────────────────────
+#  Feedback  (forward to Google Sheets via Apps Script)
+# ─────────────────────────────────────────────────────────────
+
+FEEDBACK_SHEET_URL = "https://script.google.com/macros/s/AKfycbwVs6bpXUpc5xkxt3mpXykKmMTkze89_3iL4cU4VSzlJ8el0xEi0u_Mi7OJoi-U-ZcjQQ/exec"
+
+class FeedbackRequest(BaseModel):
+    username: str
+    feedback: str
+    type: Optional[str] = "feedback"   # "feedback" | "bug" | "suggestion"
+
+@app.post("/feedback", tags=["system"])
+def submit_feedback(body: FeedbackRequest):
+    """
+    Forward user feedback/bug report to Google Sheets via Apps Script.
+    Payload: { username, feedback, type }
+    """
+    import urllib.request as _req
+    import urllib.error as _err
+
+    if not body.username.strip():
+        raise HTTPException(400, detail="Username tidak boleh kosong.")
+    if not body.feedback.strip():
+        raise HTTPException(400, detail="Pesan feedback tidak boleh kosong.")
+
+    payload = json.dumps({
+        "username": body.username.strip(),
+        "feedback": body.feedback.strip(),
+        "type":     body.type or "feedback",
+        "version":  APP_VERSION_NAME,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }).encode("utf-8")
+
+    try:
+        request = _req.Request(
+            FEEDBACK_SHEET_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _req.urlopen(request, timeout=10) as resp:
+            result = resp.read().decode("utf-8")
+        print(f"[Feedback] Terkirim dari '{body.username}' — {result[:80]}")
+        return {"message": "Feedback berhasil dikirim! Terima kasih 🙏"}
+    except _err.HTTPError as e:
+        raise HTTPException(502, detail=f"Google Sheets error: {e.code} {e.reason}")
+    except Exception as e:
+        raise HTTPException(502, detail=f"Gagal mengirim feedback: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+#  Version / Update Info  (client-facing endpoint)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/version", tags=["system"])
+def get_version():
+    """
+    Returns current app version and latest version info from GitHub.
+    Used by the Web UI to show an update banner.
+    """
+    if not _update_info:
+        # lazy-fetch if lifespan didn't run (e.g. imported as module)
+        _check_for_update()
+    return _update_info
+
 
 # ─────────────────────────────────────────────────────────────
 #  OBS Overlay HTML
