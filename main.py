@@ -964,6 +964,64 @@ _tiktok_thread = None            # reference to listener thread
 # Per-user request count (reset on each song change)
 _user_request_count: dict = {}
 
+_TIKTOK_EMOTES: dict = {
+    "[thumb]":       "👍", "[thumbsup]":    "👍", "[thumbsdown]":  "👎",
+    "[ok]":          "👌", "[clap]":        "👏", "[wave]":        "👋",
+    "[strong]":      "💪", "[victory]":     "✌️", "[handshake]":   "🤝",
+    "[point]":       "👉", "[raise]":       "🙋", "[pray]":        "🙏",
+    # Ekspresi wajah
+    "[smile]":       "😊", "[laugh]":       "😂", "[lol]":         "😂",
+    "[haha]":        "😄", "[cry]":         "😢", "[sad]":         "😢",
+    "[tear]":        "😭", "[angry]":       "😠", "[rage]":        "😡",
+    "[wow]":         "😮", "[surprised]":   "😮", "[shock]":       "😲",
+    "[cool]":        "😎", "[wink]":        "😉", "[blush]":       "😊",
+    "[kiss]":        "😘", "[love]":        "😍", "[yum]":         "😋",
+    "[think]":       "🤔", "[sleep]":       "😴", "[dizzy]":       "😵",
+    "[sick]":        "🤒", "[mask]":        "😷", "[nerd]":        "🤓",
+    "[sweat]":       "😅", "[nervous]":     "😬", "[fear]":        "😨",
+    "[scream]":      "😱", "[dead]":        "💀", "[skull]":       "💀",
+    "[ghost]":       "👻", "[alien]":       "👽", "[robot]":       "🤖",
+    # Hati
+    "[heart]":       "❤️", "[hearts]":      "❤️", "[like]":        "❤️",
+    "[redheart]":    "❤️", "[pinkheart]":   "🩷", "[orangeheart]": "🧡",
+    "[yellowheart]": "💛", "[greenheart]":  "💚", "[blueheart]":   "💙",
+    "[purpleheart]": "💜", "[blackheart]":  "🖤", "[brokenheart]": "💔",
+    "[heartbeat]":   "💓", "[sparkleheart]":"💖", "[revolving]":   "💞",
+    # Simbol & objek
+    "[fire]":        "🔥", "[star]":        "⭐", "[sparkles]":    "✨",
+    "[gift]":        "🎁", "[rose]":        "🌹", "[flower]":      "🌸",
+    "[money]":       "💰", "[coin]":        "🪙", "[crown]":       "👑",
+    "[gem]":         "💎", "[trophy]":      "🏆", "[medal]":       "🥇",
+    "[rocket]":      "🚀", "[bomb]":        "💣", "[lightning]":   "⚡",
+    "[rainbow]":     "🌈", "[sun]":         "☀️", "[moon]":        "🌙",
+    "[cloud]":       "☁️", "[snow]":        "❄️", "[umbrella]":    "☂️",
+    # Musik & hiburan
+    "[music]":       "🎵", "[mic]":         "🎤", "[guitar]":      "🎸",
+    "[dance]":       "💃", "[party]":       "🎉", "[confetti]":    "🎊",
+    "[cake]":        "🎂", "[balloon]":     "🎈", "[100]":         "💯",
+    # Makanan & minuman
+    "[pizza]":       "🍕", "[burger]":      "🍔", "[fries]":       "🍟",
+    "[coffee]":      "☕", "[boba]":        "🧋", "[beer]":        "🍺",
+    "[wine]":        "🍷", "[cake2]":       "🍰", "[icecream]":    "🍦",
+    # Hewan
+    "[cat]":         "🐱", "[dog]":         "🐶", "[bear]":        "🐻",
+    "[panda]":       "🐼", "[rabbit]":      "🐰", "[fox]":         "🦊",
+    "[lion]":        "🦁", "[tiger]":       "🐯", "[monkey]":      "🐵",
+    # Olahraga
+    "[soccer]":      "⚽", "[basketball]":  "🏀", "[football]":    "🏈",
+    "[gaming]":      "🎮", "[trophy2]":     "🏆",
+}
+
+def _convert_tiktok_emotes(text: str) -> str:
+    """
+    Konversi TikTok emote shortcode (mis. [thumb]) ke karakter emoji unicode.
+    Lookup O(1) per token, tidak ada regex kompleks.
+    """
+    import re
+    def _replace(m: "re.Match") -> str:
+        return _TIKTOK_EMOTES.get(m.group(0).lower(), m.group(0))
+    return re.sub(r'\[[^\]]{1,20}\]', _replace, text)
+
 
 def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_url: str = ""):
     """
@@ -1089,11 +1147,14 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_ur
         return  # blokir TTS dan overlay untuk komentar ini
 
     # Broadcast ke OBS chat overlay
+    #Konversi Tiktok emote shortcode
+
+    display_text = _convert_tiktok_emotes(comment)
     _broadcast("tiktok_chat", {
         "user": nickname,
         "user_id": user_id,
         "avatar": avatar_url,
-        "text": comment,
+        "text": display_text,
         "time": _now(),
         "type": "chat",
     })
