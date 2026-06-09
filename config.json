@@ -28,7 +28,8 @@
     "max_queue_per_user": 3,
     "enable_skip_vote": true,
     "skip_vote_threshold": 5,
-    "tiktok_warmup_seconds": 5
+    "tiktok_warmup_seconds": 5,
+    "music_volume": 126
   },
   "tts": {
     "enabled": false,
@@ -41,7 +42,8 @@
     "_comment_rate": "Kecepatan bicara: -50% s/d +100% (default +0%)",
     "_comment_volume": "Volume TTS: -50% s/d +100% (default +0%). Juga dikontrol dari slider di Player tab.",
     "_comment_volume_pct": "Integer source-of-truth untuk volume TTS, dipakai slider Player tab.",
-    "_comment_max_length": "Batas karakter teks yang dibaca (lebih panjang = di-skip)"
+    "_comment_max_length": "Batas karakter teks yang dibaca (lebih panjang = di-skip)",
+    "volume_pct": 0
   },
   "overlay": {
     "show_now_playing": true,
