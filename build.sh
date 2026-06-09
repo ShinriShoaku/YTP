@@ -4,7 +4,7 @@
 set -e
 
 # === 🛠️ SET VERSI APLIKASI DI SINI ===
-APP_VERSION="v4.1.0-tester"
+APP_VERSION="v5.1.0-tester"
 DIST_NAME="YTPlayer-${APP_VERSION}"
 DIST_DIR="dist/${DIST_NAME}"
 

@@ -30,6 +30,90 @@ import traceback
 from datetime import datetime, timezone
 
 # ─────────────────────────────────────────────────────────────
+#  Version / Update Check
+# ─────────────────────────────────────────────────────────────
+
+APP_VERSION_CODE = 5          # bump this each release
+APP_VERSION_NAME = "5.1.0"   # human-readable version  (major.minor.patch)
+
+VERSION_JSON_URL = (
+    "https://raw.githubusercontent.com/ShinriShoaku/YTP/main/version.json"
+)
+
+_update_info: dict = {}   # filled once at startup; exposed via /version endpoint
+
+
+def _parse_version(v: str):
+    """
+    Parse a semver-style string like '5.1.0' into a comparable tuple of ints.
+    Non-numeric segments default to 0.  e.g. '5.1.0' → (5, 1, 0)
+    """
+    parts = []
+    for seg in str(v).strip().split("."):
+        try:
+            parts.append(int(seg))
+        except ValueError:
+            parts.append(0)
+    # Normalise to at least 3 parts so (5,) < (5,1) comparisons work correctly
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _check_for_update() -> dict:
+    """
+    Fetch version.json from GitHub and decide whether an update is available.
+
+    Update logic (either condition triggers):
+      1. latest versionCode  > current APP_VERSION_CODE   (major releases)
+      2. latest versionName  > current APP_VERSION_NAME   (semver comparison –
+         catches patch / hotfix releases even when versionCode stays the same)
+
+    Returns a dict exposed via GET /version.
+    Silently ignores network / parse errors.
+    """
+    global _update_info
+    try:
+        req = urllib.request.Request(
+            VERSION_JSON_URL,
+            headers={"User-Agent": "YTPlayer-UpdateChecker/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        latest_code = int(data.get("versionCode", 0))
+        latest_name = str(data.get("versionName", "?"))
+        message     = str(data.get("updateMessage", ""))
+
+        # Compare by versionCode OR semver versionName – whichever is higher
+        ver_cur = _parse_version(APP_VERSION_NAME)
+        ver_lat = _parse_version(latest_name)
+        available = (latest_code > APP_VERSION_CODE) or (ver_lat > ver_cur)
+        print(f"[Update-debug] lokal={APP_VERSION_NAME}{list(ver_cur)} github={latest_name}{list(ver_lat)} available={available}")
+
+        _update_info = {
+            "current_version_code": APP_VERSION_CODE,
+            "current_version_name": APP_VERSION_NAME,
+            "latest_version_code":  latest_code,
+            "latest_version_name":  latest_name,
+            "update_message":       message,
+            "update_available":     available,
+        }
+        return _update_info
+    except Exception as e:
+        _update_info = {
+            "current_version_code": APP_VERSION_CODE,
+            "current_version_name": APP_VERSION_NAME,
+            "latest_version_code":  APP_VERSION_CODE,
+            "latest_version_name":  APP_VERSION_NAME,
+            "update_message":       "",
+            "update_available":     False,
+            "error":                str(e),
+        }
+        return _update_info
+
+
+# ─────────────────────────────────────────────────────────────
 #  Platform Detection
 # ─────────────────────────────────────────────────────────────
 
@@ -64,6 +148,23 @@ async def lifespan(application: FastAPI):
 
     # TikTok is NOT started automatically – connect manually via the Web UI Settings tab.
     print("[TikTok] Auto-connect disabled. Use the Web UI Settings tab to connect manually.")
+
+    # ── Update check ───────────────────────────────────────────
+    _upd = _check_for_update()
+    if _upd.get("update_available"):
+        print("")
+        print("+" + "-"*53 + "+")
+        print(f"|  UPDATE TERSEDIA  v{_upd['latest_version_name']}  (kamu: v{_upd['current_version_name']})".ljust(54) + "|")
+        if _upd.get("update_message"):
+            print(f"|  {_upd['update_message'][:50]}".ljust(54) + "|")
+        print("|  https://github.com/ShinriShoaku/YTP              |")
+        print("+" + "-"*53 + "+")
+        print("")
+    elif "error" in _upd:
+        print(f"[Update] Cek versi gagal: {_upd['error']}")
+    else:
+        print(f"[Update] Versi kamu v{_upd['current_version_name']} — sudah up-to-date ✓ (latest: v{_upd['latest_version_name']})")
+
     yield
     # ── shutdown (nothing needed) ──────────────────────────────
 
@@ -326,12 +427,50 @@ _server_player: Optional[str] = None
 _player_killed: bool = False
 
 # IPC paths differ by OS
+# Music mpv uses one socket, TTS mpv uses a DIFFERENT socket to avoid clashing
 if IS_WINDOWS:
-    MPV_SOCKET     = r'\\.\pipe\ytapi-mpv'
-    MPV_SOCKET_ARG = r'//./pipe/ytapi-mpv'
+    # On Windows, mpv --input-ipc-server expects ONLY the bare pipe name (no path prefix).
+    # mpv will create \\.\pipe\<name> automatically.
+    MPV_SOCKET_ARG     = 'ytapi-mpv'
+    MPV_TTS_SOCKET_ARG = 'ytapi-mpv-tts'
+    # Full UNC path used by Python open() to connect: \\\\.\\pipe\\<name>
+    MPV_SOCKET         = '\\\\.\\pipe\\ytapi-mpv'
+    MPV_TTS_SOCKET     = '\\\\.\\pipe\\ytapi-mpv-tts'
 else:
-    MPV_SOCKET     = "/tmp/ytapi-mpv.sock"
-    MPV_SOCKET_ARG = MPV_SOCKET
+    MPV_SOCKET         = "/tmp/ytapi-mpv.sock"
+    MPV_SOCKET_ARG     = MPV_SOCKET
+    MPV_TTS_SOCKET     = "/tmp/ytapi-mpv-tts.sock"
+    MPV_TTS_SOCKET_ARG = MPV_TTS_SOCKET
+
+
+def _get_music_volume() -> int:
+    """Return current music volume (0-150). Prefers in-memory global over disk."""
+    global _music_volume
+    try:
+        if _music_volume is not None:
+            return _music_volume
+    except NameError:
+        pass
+    cfg = _load_config()
+    raw = cfg.get("settings", {}).get("music_volume")
+    if raw is None:
+        raw = cfg.get("music", {}).get("volume", 100)
+    try:
+        return max(0, min(150, int(raw)))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _tts_volume_to_mpv(edge_volume: str) -> int:
+    """
+    Convert edge-tts volume string (e.g. '+20%', '-10%', '+0%') to mpv 0-100 int.
+    edge-tts default is +0% = 100% = mpv 100.
+    """
+    try:
+        val = int(str(edge_volume).replace('%', '').replace('+', '').strip())
+        return max(0, min(130, 100 + val))
+    except (TypeError, ValueError):
+        return 100
 
 
 def _mpv_send_unix(command: list, timeout: float = 2.0) -> Optional[dict]:
@@ -356,31 +495,50 @@ def _mpv_send_unix(command: list, timeout: float = 2.0) -> Optional[dict]:
 
 
 def _mpv_send_windows(command: list, timeout: float = 2.0) -> Optional[dict]:
-    """Send command to mpv via Windows named pipe with thread timeout."""
+    """
+    Send JSON IPC command to mpv via Windows named pipe.
+    MPV_SOCKET = '\\.\\pipe\\ytapi-mpv' (full UNC path for Python open).
+    Retries up to 2s to handle the brief startup window after mpv launches.
+    """
+    if _mpv_proc is None or _mpv_proc.poll() is not None:
+        return None
+
     result: list = [None]
 
     def _do():
-        try:
-            with open(MPV_SOCKET, 'r+b', buffering=0) as f:
-                msg = json.dumps({"command": command}).encode() + b'\n'
-                f.write(msg)
-                resp = f.read(4096)
-                if resp:
-                    # mpv may send multiple lines; grab first valid JSON
-                    for line in resp.decode('utf-8', errors='ignore').splitlines():
-                        line = line.strip()
-                        if line:
-                            try:
-                                result[0] = json.loads(line)
-                                break
-                            except Exception:
-                                pass
-        except Exception as e:
-            print(f"[MPV IPC Windows] {e}")
+        deadline = time.time() + 2.0
+        last_err = None
+        while time.time() < deadline:
+            try:
+                with open(MPV_SOCKET, 'r+b', buffering=0) as f:
+                    msg = json.dumps({"command": command}).encode() + b'\n'
+                    f.write(msg)
+                    resp = f.read(4096)
+                    if resp:
+                        for line in resp.decode('utf-8', errors='ignore').splitlines():
+                            line = line.strip()
+                            if line:
+                                try:
+                                    result[0] = json.loads(line)
+                                    return
+                                except Exception:
+                                    pass
+                    return  # sent OK even if no parseable response
+            except FileNotFoundError:
+                last_err = "pipe not ready yet"
+                time.sleep(0.1)
+            except PermissionError:
+                last_err = "pipe busy"
+                time.sleep(0.1)
+            except Exception as e:
+                last_err = str(e)
+                break
+        if last_err:
+            print(f"[MPV IPC Windows] {last_err} | pipe={MPV_SOCKET!r}")
 
     t = threading.Thread(target=_do, daemon=True)
     t.start()
-    t.join(timeout=timeout)
+    t.join(timeout=timeout + 2.5)
     return result[0]
 
 
@@ -442,15 +600,19 @@ def _play_server_audio(youtube_url: str) -> bool:
         stream_url = _get_audio_stream_url(youtube_url)
         player_bin = _server_player  # may be a full path on Windows
 
+        music_vol = _get_music_volume()
         if "mpv" in os.path.basename(player_bin):
             cmd = [
                 player_bin,
                 "--no-video", "--really-quiet", "--no-terminal",
                 f"--input-ipc-server={MPV_SOCKET_ARG}",
+                f"--volume={music_vol}",   # volume musik dari config['music']['volume']
                 stream_url,
             ]
         else:  # ffplay fallback
-            cmd = [player_bin, "-nodisp", "-autoexit", "-loglevel", "quiet", stream_url]
+            # ffplay: -volume 0-100
+            cmd = [player_bin, "-nodisp", "-autoexit", "-loglevel", "quiet",
+                   "-volume", str(music_vol), stream_url]
 
         _mpv_proc = subprocess.Popen(
             cmd,
@@ -632,13 +794,14 @@ def _speak_text(text: str):
             pass
         return False
 
-    def _play_pygame_wav(wav_path: str) -> bool:
-        """Play WAV with pygame.mixer.Sound – avoids MP3 codec issues entirely."""
+    def _play_pygame_wav(wav_path: str, volume_pct: float = 1.0) -> bool:
+        """Play WAV with pygame.mixer.Sound – supports volume control (0.0–1.0)."""
         try:
             import pygame
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
             sound = pygame.mixer.Sound(wav_path)
+            sound.set_volume(max(0.0, min(1.0, volume_pct)))   # apply TTS volume
             channel = sound.play()
             while channel and channel.get_busy():
                 time.sleep(0.05)
@@ -647,9 +810,16 @@ def _speak_text(text: str):
             print(f"[TTS] pygame WAV playback failed: {e}")
             return False
 
-    def _play_winsound_wav(wav_path: str) -> bool:
-        """Windows built-in winsound – zero dependencies, WAV only."""
+    def _play_winsound_wav(wav_path: str, tts_vol: int = 100) -> bool:
+        """
+        Windows built-in winsound – zero dependencies, WAV only.
+        CATATAN: winsound tidak support volume control.
+        Jika volume TTS bukan default (100), skip dan biarkan mpv/pygame yang handle.
+        """
         if not IS_WINDOWS:
+            return False
+        if tts_vol != 100:
+            # winsound tidak bisa atur volume — skip ke mpv fallback
             return False
         try:
             import winsound
@@ -666,20 +836,24 @@ def _speak_text(text: str):
             return _server_player
         return _find_local_player("mpv")  # reuse existing helper
 
-    def _play_system_mp3(path: str) -> bool:
+    def _play_system_mp3(path: str, tts_vol: int = 100) -> bool:
         """
-        Last-resort: play MP3 directly via a subprocess player.
-        On Windows: tries local mpv (already bundled) with a temp IPC socket name.
-        On Linux: tries ffplay → local/system mpv.
-        --no-input-ipc-server prevents clashing with the music mpv instance.
+        Play MP3 via subprocess player dengan volume control.
+        Menggunakan socket IPC TERPISAH (MPV_TTS_SOCKET_ARG) agar tidak bentrok
+        dengan mpv musik yang sedang berjalan.
+        Windows: mpv dengan --input-ipc-server ke pipe TTS → ffplay fallback.
+        Linux/Mac: ffplay → mpv dengan socket TTS.
         """
         if IS_WINDOWS:
             mpv = _find_local_mpv()
             candidates = []
             if mpv:
+                # Gunakan MPV_TTS_SOCKET_ARG — pipe berbeda dari musik
                 candidates.append(
                     [mpv, "--no-video", "--really-quiet", "--no-terminal",
-                     "--no-input-ipc-server", path]
+                     f"--input-ipc-server={MPV_TTS_SOCKET_ARG}",
+                     f"--volume={tts_vol}",
+                     path]
                 )
             ffmpeg = _find_ffmpeg()
             # ffplay ships with ffmpeg on Windows
@@ -687,18 +861,24 @@ def _speak_text(text: str):
                 ffplay = ffmpeg.replace("ffmpeg.exe", "ffplay.exe").replace("ffmpeg", "ffplay")
                 if os.path.isfile(ffplay):
                     candidates.append(
-                        [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+                        [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet",
+                         "-volume", str(tts_vol), path]
                     )
         elif sys.platform == "darwin":
+            # afplay: -v 0.0-1.0
+            vol_f = round(tts_vol / 100, 2)
             candidates = [
-                ["afplay", path],
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["afplay", "-v", str(vol_f), path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                 "-volume", str(tts_vol), path],
             ]
-        else:  # Linux
+        else:  # Linux — socket TTS terpisah agar tidak bentrok musik
             candidates = [
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                 "-volume", str(tts_vol), path],
                 ["mpv", "--no-video", "--really-quiet", "--no-terminal",
-                 "--no-input-ipc-server", path],
+                 f"--input-ipc-server={MPV_TTS_SOCKET_ARG}",
+                 f"--volume={tts_vol}", path],
             ]
 
         for cmd in candidates:
@@ -734,18 +914,23 @@ def _speak_text(text: str):
             finally:
                 _loop.close()
 
+            # ── Hitung volume TTS dari config ──────────────────
+            tts_mpv_vol  = _tts_volume_to_mpv(volume)      # int 0-130 untuk mpv/ffplay
+            tts_pygame_v = max(0.0, min(1.0, tts_mpv_vol / 100))  # float 0.0-1.0 untuk pygame
+
             # ── 2. Convert MP3 → WAV (for pygame / winsound) ──
             wav_ok = _mp3_to_wav(mp3_file, wav_file)
 
             # ── 3. Playback priority chain ─────────────────────
-            #   pygame (WAV) → winsound (WAV, Windows) → system player (MP3)
+            #   pygame (WAV, dengan volume) → winsound (skip jika vol != 100)
+            #   → mpv/ffplay subprocess (WAV atau MP3, dengan volume, socket TTS terpisah)
             played = False
             if wav_ok:
-                played = _play_pygame_wav(wav_file)
+                played = _play_pygame_wav(wav_file, volume_pct=tts_pygame_v)
             if not played and wav_ok:
-                played = _play_winsound_wav(wav_file)
+                played = _play_winsound_wav(wav_file, tts_vol=tts_mpv_vol)
             if not played:
-                played = _play_system_mp3(mp3_file)
+                played = _play_system_mp3(mp3_file, tts_vol=tts_mpv_vol)
             if not played:
                 if IS_WINDOWS:
                     print("[TTS] No playback method worked on Windows.\n"
@@ -778,70 +963,6 @@ _tiktok_thread = None            # reference to listener thread
 
 # Per-user request count (reset on each song change)
 _user_request_count: dict = {}
-
-
-# ─────────────────────────────────────────────────────────────
-#  TikTok Emote Shortcode → Unicode Emoji Converter
-# ─────────────────────────────────────────────────────────────
-
-_TIKTOK_EMOTES: dict = {
-    # Tangan / gestur
-    "[thumb]":       "👍", "[thumbsup]":    "👍", "[thumbsdown]":  "👎",
-    "[ok]":          "👌", "[clap]":        "👏", "[wave]":        "👋",
-    "[strong]":      "💪", "[victory]":     "✌️", "[handshake]":   "🤝",
-    "[point]":       "👉", "[raise]":       "🙋", "[pray]":        "🙏",
-    # Ekspresi wajah
-    "[smile]":       "😊", "[laugh]":       "😂", "[lol]":         "😂",
-    "[haha]":        "😄", "[cry]":         "😢", "[sad]":         "😢",
-    "[tear]":        "😭", "[angry]":       "😠", "[rage]":        "😡",
-    "[wow]":         "😮", "[surprised]":   "😮", "[shock]":       "😲",
-    "[cool]":        "😎", "[wink]":        "😉", "[blush]":       "😊",
-    "[kiss]":        "😘", "[love]":        "😍", "[yum]":         "😋",
-    "[think]":       "🤔", "[sleep]":       "😴", "[dizzy]":       "😵",
-    "[sick]":        "🤒", "[mask]":        "😷", "[nerd]":        "🤓",
-    "[sweat]":       "😅", "[nervous]":     "😬", "[fear]":        "😨",
-    "[scream]":      "😱", "[dead]":        "💀", "[skull]":       "💀",
-    "[ghost]":       "👻", "[alien]":       "👽", "[robot]":       "🤖",
-    # Hati
-    "[heart]":       "❤️", "[hearts]":      "❤️", "[like]":        "❤️",
-    "[redheart]":    "❤️", "[pinkheart]":   "🩷", "[orangeheart]": "🧡",
-    "[yellowheart]": "💛", "[greenheart]":  "💚", "[blueheart]":   "💙",
-    "[purpleheart]": "💜", "[blackheart]":  "🖤", "[brokenheart]": "💔",
-    "[heartbeat]":   "💓", "[sparkleheart]":"💖", "[revolving]":   "💞",
-    # Simbol & objek
-    "[fire]":        "🔥", "[star]":        "⭐", "[sparkles]":    "✨",
-    "[gift]":        "🎁", "[rose]":        "🌹", "[flower]":      "🌸",
-    "[money]":       "💰", "[coin]":        "🪙", "[crown]":       "👑",
-    "[gem]":         "💎", "[trophy]":      "🏆", "[medal]":       "🥇",
-    "[rocket]":      "🚀", "[bomb]":        "💣", "[lightning]":   "⚡",
-    "[rainbow]":     "🌈", "[sun]":         "☀️", "[moon]":        "🌙",
-    "[cloud]":       "☁️", "[snow]":        "❄️", "[umbrella]":    "☂️",
-    # Musik & hiburan
-    "[music]":       "🎵", "[mic]":         "🎤", "[guitar]":      "🎸",
-    "[dance]":       "💃", "[party]":       "🎉", "[confetti]":    "🎊",
-    "[cake]":        "🎂", "[balloon]":     "🎈", "[100]":         "💯",
-    # Makanan & minuman
-    "[pizza]":       "🍕", "[burger]":      "🍔", "[fries]":       "🍟",
-    "[coffee]":      "☕", "[boba]":        "🧋", "[beer]":        "🍺",
-    "[wine]":        "🍷", "[cake2]":       "🍰", "[icecream]":    "🍦",
-    # Hewan
-    "[cat]":         "🐱", "[dog]":         "🐶", "[bear]":        "🐻",
-    "[panda]":       "🐼", "[rabbit]":      "🐰", "[fox]":         "🦊",
-    "[lion]":        "🦁", "[tiger]":       "🐯", "[monkey]":      "🐵",
-    # Olahraga
-    "[soccer]":      "⚽", "[basketball]":  "🏀", "[football]":    "🏈",
-    "[gaming]":      "🎮", "[trophy2]":     "🏆",
-}
-
-def _convert_tiktok_emotes(text: str) -> str:
-    """
-    Konversi TikTok emote shortcode (mis. [thumb]) ke karakter emoji unicode.
-    Lookup O(1) per token, tidak ada regex kompleks.
-    """
-    import re
-    def _replace(m: "re.Match") -> str:
-        return _TIKTOK_EMOTES.get(m.group(0).lower(), m.group(0))
-    return re.sub(r'\[[^\]]{1,20}\]', _replace, text)
 
 
 def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_url: str = ""):
@@ -968,13 +1089,11 @@ def _process_tiktok_comment(user_id: str, nickname: str, comment: str, avatar_ur
         return  # blokir TTS dan overlay untuk komentar ini
 
     # Broadcast ke OBS chat overlay
-    # Konversi TikTok emote shortcode ([thumb], [heart], dll) → emoji unicode
-    display_text = _convert_tiktok_emotes(comment)
     _broadcast("tiktok_chat", {
         "user": nickname,
         "user_id": user_id,
         "avatar": avatar_url,
-        "text": display_text,
+        "text": comment,
         "time": _now(),
         "type": "chat",
     })
@@ -2108,10 +2227,17 @@ def stop_player():
 def _vol_load_from_config() -> tuple[int, int]:
     """Read music_volume and tts volume_pct from config. Returns (music, tts_pct)."""
     cfg = _load_config()
-    music = int(cfg.get("settings", {}).get("music_volume", 100))
-    music = max(0, min(150, music))
-    tts_pct = int(cfg.get("tts", {}).get("volume_pct", 0))
-    tts_pct = max(-50, min(100, tts_pct))
+    music_raw = cfg.get("settings", {}).get("music_volume")
+    if music_raw is None:
+        music_raw = cfg.get("music", {}).get("volume", 100)
+    try:
+        music = max(0, min(150, int(music_raw)))
+    except (TypeError, ValueError):
+        music = 100
+    try:
+        tts_pct = max(-50, min(100, int(cfg.get("tts", {}).get("volume_pct", 0))))
+    except (TypeError, ValueError):
+        tts_pct = 0
     return music, tts_pct
 
 _music_volume: int
@@ -2527,6 +2653,22 @@ async def proxy_avatar(url: str = Query(..., description="Image URL to proxy")):
     return FastAPIResponse(content=data, media_type=ct,
                            headers={"Cache-Control":"public,max-age=3600",
                                     "Access-Control-Allow-Origin":"*"})
+
+# ─────────────────────────────────────────────────────────────
+#  Version / Update Info  (client-facing endpoint)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/version", tags=["system"])
+def get_version():
+    """
+    Returns current app version and latest version info from GitHub.
+    Used by the Web UI to show an update banner.
+    """
+    if not _update_info:
+        # lazy-fetch if lifespan didn't run (e.g. imported as module)
+        _check_for_update()
+    return _update_info
+
 
 # ─────────────────────────────────────────────────────────────
 #  OBS Overlay HTML
